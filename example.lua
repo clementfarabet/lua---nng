@@ -1,6 +1,6 @@
 
-require 'xlua'
-require 'init'
+-- load nng
+require 'nng'
 
 -- declare an input variable
 input1 = nng.Var()

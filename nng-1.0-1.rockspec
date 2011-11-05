@@ -1,9 +1,9 @@
 
-package = "nnx"
+package = "nng"
 version = "1.0-1"
 
 source = {
-   url = "nnx-1.0-1.tgz"
+   url = "nng-1.0-1.tgz"
 }
 
 description = {
