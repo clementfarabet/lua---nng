@@ -16,13 +16,16 @@ output1 = mod2.io.outputs[1]
 g = nng.Graph(mod1,mod2)
 
 -- update graph
+print()
 print('time 0')
 print(g)
 
+print()
 print('time 1 (set inputs)')
 input1:set(lab.randn(10))
 print(g)
 
+print()
 print('time 2 (updated graph)')
 g:update(output1)
 print(g)

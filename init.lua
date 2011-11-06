@@ -1,7 +1,7 @@
 ----------------------------------------------------------------------
 --
 -- Copyright (c) 2011 Clement Farabet
--- 
+--
 -- Permission is hereby granted, free of charge, to any person obtaining
 -- a copy of this software and associated documentation files (the
 -- "Software"), to deal in the Software without restriction, including
@@ -9,10 +9,10 @@
 -- distribute, sublicense, and/or sell copies of the Software, and to
 -- permit persons to whom the Software is furnished to do so, subject to
 -- the following conditions:
--- 
+--
 -- The above copyright notice and this permission notice shall be
 -- included in all copies or substantial portions of the Software.
--- 
+--
 -- THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
 -- EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
 -- MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
@@ -20,12 +20,12 @@
 -- LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 -- OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 -- WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
--- 
+--
 ----------------------------------------------------------------------
 -- description:
 --     nng - a neural network graph description package
 --
--- history: 
+-- history:
 --     November  5, 2011, 4:57PM - first draft - Clement Farabet
 ----------------------------------------------------------------------
 
@@ -45,13 +45,31 @@ function nng.Graph(...)
    local g = {}
    g.modules = {}
    g.add = function(self, ...)
+              if self.parameters then
+                 error('modules cant be added to an existing graph')
+              end
+              local parameters = {}
+              local gradParameters = {}
               for i,m in ipairs{...} do
                  table.insert(self.modules, m)
+                 local p,g = m:parameters()
+                 if p then
+                    for _,p in ipairs(p) do
+                       table.insert(parameters,p)
+                    end
+                    for _,g in ipairs(g) do
+                       table.insert(gradParameters,g)
+                    end
+                 end
+              end
+              if parameters[1] then
+                 self.parameters = nng.flatten(parameters)
+                 self.gradParameters = nng.flatten(gradParameters)
               end
            end
    g.update = function(self, ...)
                  local vars = {...}
-                 if #vars then
+                 if #vars > 0 then
                     -- if vars given, then just update those:
                     for _,var in ipairs(vars) do
                        if var.parent then
@@ -88,14 +106,18 @@ end
 
 -- create new node
 function nng.Node(module, inputs)
+   -- connect inputs
    for k,input in pairs(inputs) do
       table.insert(input.children, module)
    end
+   -- connect outputs
    local outputs = {nng.Var(module.output)}
    outputs[1].parent = module
+   -- register all
    module.io = {}
    module.io.inputs = inputs
    module.io.outputs = outputs
+   -- update function
    module.update = function(self)
                       -- if output valid then all good
                       local isvalid = true
@@ -152,7 +174,7 @@ function nng.Var(data)
                 self.valid = valid
                 for _,child in ipairs(self.children) do
                    for _,output in ipairs(child.io.outputs) do
-                      output:state(false)
+                      output:state(valid)
                    end
                 end
              end
@@ -165,4 +187,70 @@ local Module = torch.getmetatable('nn.Module')
 function Module:__call__(inputs)
    local n = nng.Node(self, inputs)
    return n
+end
+
+-- helpers
+function nng.flatten(parameters)
+   -- already flat ?
+   local flat = true
+   for k = 2,#parameters do
+      if parameters[k]:storage() ~= parameters[k-1]:storage() then
+         flat = false
+         break
+      end
+   end
+   if flat then
+      local nParameters = 0
+      for k,param in ipairs(parameters) do
+         nParameters = nParameters + param:nElement()
+      end
+      flatParameters = parameters[1].new(parameters[1]:storage())
+      if nParameters ~= flatParameters:nElement() then
+         error('weird parameters: cant deal with them')
+      end
+      return flatParameters
+   end
+   -- compute offsets of each parameter
+   local offsets = {}
+   local sizes = {}
+   local strides = {}
+   local elements = {}
+   local storageOffsets = {}
+   local params = {}
+   local nParameters = 0
+   for k,param in ipairs(parameters) do
+      table.insert(offsets, nParameters+1)
+      table.insert(sizes, param:size())
+      table.insert(strides, param:stride())
+      table.insert(elements, param:nElement())
+      table.insert(storageOffsets, param:storageOffset())
+      local isView = false
+      for i = 1,k-1 do
+         if param:storage() == parameters[i]:storage() then
+            offsets[k] = offsets[i]
+            if storageOffsets[k] ~= storageOffsets[i] or elements[k] ~= elements[i] then
+               error('cannot flatten shared weights with different structures')
+            end
+            isView = true
+            break
+         end
+      end
+      if not isView then
+         nParameters = nParameters + param:nElement()
+      end
+   end
+   -- create flat vector
+   local flatParameters = parameters[1].new(nParameters)
+   local storage = flatParameters:storage()
+   -- reallocate all parameters in flat vector
+   for i = 1,#parameters do
+      local data = parameters[i]:clone()
+      parameters[i]:set(storage, offsets[i], elements[i]):resize(sizes[i],strides[i]):copy(data)
+      data = nil
+      collectgarbage()
+   end
+   -- cleanup
+   collectgarbage()
+   -- return new flat vector that contains all discrete parameters
+   return flatParameters
 end
