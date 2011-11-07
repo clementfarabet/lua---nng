@@ -117,6 +117,10 @@ function nng.Node(module, inputs)
    module.io = {}
    module.io.inputs = inputs
    module.io.outputs = outputs
+   -- initially not valid
+   for _,output in ipairs(module.io.outputs) do
+       output.valid = false
+   end
    -- update function
    module.update = function(self)
                       -- if output valid then all good
@@ -178,7 +182,7 @@ function nng.Var(data)
                    end
                 end
              end
-   return t
+   return t   
 end
 
 -- extend nn.Module class
