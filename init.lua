@@ -80,11 +80,18 @@ function nng.Graph(...)
                     end
                  else
                     -- if no var given, update the whole graph
+                    -- TODO: this part should probably go away?
                     for _,module in ipairs(self.modules) do
                        module:update()
                     end
                  end
               end
+   g.tick = function(self)
+   				-- update all the time-delayed units
+   				for _,module in ipairs(self.modules) do
+                	if module.tick then module:tick() end
+                end
+   			end
    local mt = {}
    mt.__tostring = function(self)
                       local str = 'nng.Graph'
@@ -150,7 +157,7 @@ function nng.Node(module, inputs)
                       else
                          local inputs = {}
                          for _,inp in ipairs(self.io.inputs) do
-                            table.insert(inputs, inp)
+                            table.insert(inputs, inp.data)
                          end
                          self:forward(inputs)
                       end
