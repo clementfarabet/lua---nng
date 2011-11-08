@@ -107,7 +107,7 @@ end
 -- create new node
 function nng.Node(module, inputs)
    -- connect inputs
-   for k,input in pairs(inputs) do
+   for _,input in pairs(inputs) do
       table.insert(input.children, module)
    end
    -- connect outputs
