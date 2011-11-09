@@ -10,9 +10,10 @@ function nng.FlipFlop(size, initvalues)
 	if not initvalues then initvalues = lab.zeros(size) end
 	local t = nng.Identity()
 	t.io = {outputs={nng.Var(initvalues), parent=t}}
+	-- finishes up the flipflop construction, called at a later point, 
+	-- when the inputs are available. 
 	t.connect = function (self, inputs)
 					assert(#inputs == 1)
-				   	--table.insert(inputs[1].children, t)
 				   	t.io.inputs = inputs   					
 				end
 	-- dummy functions: flipflops don't propagate this
@@ -39,13 +40,38 @@ function elmanNodes(sizes)
 	fflop = nng.FlipFlop(sizes[2])
 	m0 = nng.JoinTable(1){in1, fflop.io.outputs[1]}	
 	m1 = nng.Linear(sizes[1]+sizes[2],sizes[2])(m0.io.outputs)
-	--m1 = nng.Linear(sizes[1],sizes[2]){invar}
 	m2 = nng.Tanh()(m1.io.outputs)
 	fflop:connect(m2.io.outputs) -- connecting recurrent link
-	--m0:update()
 	print(m0.io.inputs[1], m0.io.inputs[2], m0.io.outputs[1])
 	m3 = nng.Linear(sizes[2],sizes[3])(m2.io.outputs)
 	return {fflop, m0, m1, m2, m3}, in1, m3.io.outputs[1]	
+end
+
+-- Long short-term memory cells (LSTM) are a specialized building block
+-- of recurrent networks, useful whenever long time-lags need to be captured
+-- (information conserved over a prolonged time in the activations).
+-- takes 4 input Var objects, returns the required modules and an output Var
+-- TODO: add peephole connections
+function lstmUnits(size, datain, ingatein, forgetgatein, outgatein)
+	-- all the gate inputs get squashed between [0,1]
+	ingate = nng.Sigmoid(){ingatein}
+	forgetgate = nng.Sigmoid(){forgetgatein}
+	outgate = nng.Sigmoid(){outgatein}
+	-- data is squashed too, then gated
+	newdata = nng.Tanh(){datain}
+	statein = nng.CMulTable(){ingate.io.outputs[1], newdata.io.outputs[1]}
+	-- the inner "carousel" retains the state information indefinitely
+	-- as long as the forgetgate is not used (gated data is added)
+	fflop = nng.FlipFlop(size)
+	state = nng.CAddTable(){statein.io.outputs[1], fflop.io.outputs[1]}
+	nextstate = nng.CMulTable(){forgetgate.io.outputs[1], state.io.outputs[1]}
+	fflop:connect(nextstate.io.outputs)
+	-- one last squashing, of the output
+	preout = nng.CMulTable(){outgate.io.outputs[1], state.io.outputs[1]}
+	out = nng.Tanh()(preout.io.outputs)
+	
+	return {ingate, forgetgate, outgate, newdata, statein, 
+			fflop, state, nextstate, preout, out}, out.io.outputs[1]
 end
 
 
@@ -115,7 +141,55 @@ function testElman()
 end
 
 
+function testLSTM()
+	size=2
+	datain, ingatein, forgetgatein, outgatein = nng.Var(), nng.Var(), nng.Var(), nng.Var()
+	modules, outvar = lstmUnits(size, datain, ingatein, forgetgatein, outgatein)
+	g = nng.Graph(unpack(modules))
+	print(g, "init")
+	
+	-- input data: [0.01, 0.1] 
+	incs = lab.ones(size)*0.1
+	incs[1]= 0.02
+	datain:set(incs)
+	
+	-- gates completely open
+	open = lab.ones(size)*1000
+	ingatein:set(open) 
+	forgetgatein:set(open) 
+	outgatein:set(open)
+	
+	for i=1,10 do
+		g:update(outvar)
+		print(i, outvar.data[1], outvar.data[2])
+		g:tick()
+	end	
+	print()
+	
+	-- close input gate on one unit 
+	halfopen = lab.ones(size)*1000
+	halfopen[1] = -1000
+	ingatein:set(halfopen) 
+	for i=1,5 do
+		g:update(outvar)
+		print(i, outvar.data[1], outvar.data[2])
+		g:tick()
+	end
+	print()
+	
+	-- forget immediately on the other one now 
+	closed = lab.ones(size)*-1000
+	forgetgatein:set(closed) 
+	for i=1,5 do
+		g:update(outvar)
+		print(i, outvar.data[1], outvar.data[2])
+		g:tick()
+	end
+	
+end
+
+
 --testCounter()
 --testFibonacci()
 --testElman()
-
+testLSTM()
