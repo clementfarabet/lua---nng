@@ -7,7 +7,8 @@
 
 
 -- TODO: copying methods (with/without weight sharing)
--- TODO: automatic unfolding in time
+-- TODO: automatic unfolding in time (remove time-delays and replicate graph)
+-- 
 
 
 -- Node is the fundamental object of the package. A node:
@@ -93,7 +94,7 @@ function groupNodes(nodes, output)
 	g.output = output
 	
 	-- TODO: something fancier..
-	s = "Group["
+	local s = "Group["
 	for _, n in pairs(nodes) do 
 		if n.name then s = s.." "..n.name end 	
 	end
@@ -109,6 +110,20 @@ function groupNodes(nodes, output)
 end
 
 
+-- Helper function to make single inputs and tables more transparent
+local function nodetable2inputs(nodetable)
+	if #nodetable == 1 then
+		return nodetable[1].read()
+	else
+		local t = {}
+		for i,input in ipairs(nodetable) do 
+			t[i] = input.read()
+		end
+		return t
+	end
+end
+
+
 -- This extends each nn.Module class, such that its call operator wraps it in a node
 require('nn')
 require('torch')
@@ -121,38 +136,101 @@ end
 
 local Module = torch.getmetatable('nn.Module')
 
+
 function Module:__call__(inputs)	
 	local n = Node(inputs)
-	n.name = torch.typename(module)
-	-- Creating wrappers around anything that can change, 
+	n.name = torch.typename(self)
 	n.module = self
 	n.inputs = inputs
+	-- Creating wrappers around anything that can change, 
 	n.output = DataNode(self.output)
 	n.output.valid = false
-	n.output.parents={n}
-	n.parameters = DataNode(self.parameters)
-	n.gradParameters = DataNode(self.gradParameters)
+	p,g = self:parameters()
+	n.parameters = DataNode(p)
 	-- and establish the dependencies
 	table.insert(n.parents, n.parameters)
-	table.insert(n.parents, n.gradParameters)
 	n.children = {n.output}
+	n.output.parents={n}
 	
 	function n.guts()
-		if #n.inputs == 1 then
-			n.module:forward(n.inputs[1].read())
-		else
-			local t = {}
-			for i,input in ipairs(n.inputs) do 
-				t[i] = input.read()
-			end
-			n.module:forward(t)
-		end
+		n.module:forward(nodetable2inputs(n.inputs))	
 		n.output.write(n.module.output)
 	end
-	
-	-- TODO: create a node for the backward pass now too!
-	
+		
 	return n
+end
+
+
+-- Once a node is done (all children are known, and have twins of their own!), 
+-- we can create a twin node for the backward pass
+function backwardTwin(node, extGradOutput)
+	assert (#node.children >= 1 or extGradOutput)
+	assert (node.module)
+	
+	if extGradOutput then 
+		gradOutputs = {extGradOutput} 
+	else 
+		gradOutputs = {}
+	end
+			
+	-- The backward pass depends on the forward's being finished
+	-- and on all the children's twins
+	local needed = {node}
+	for _,c in ipairs(node.children) do
+		print(c.twin,c.name)
+		if not c.name=="Data" then
+			if not c.twin then
+				return {} 
+			end
+			table.insert(needed, c.twin)
+			table.insert(gradOutputs, c.twin.output)
+		end
+	end
+	local twin = Node(needed)
+	twin.name = node.name.."twin"
+	
+	-- One or two datanodes depend on the twin 
+	twin.output = DataNode(node.module.gradInput)
+	twin.output.valid=false
+	twin.output.parents = {twin}
+	twin.children = {twin.output}
+	p,g = node.module:parameters()	
+	if g then
+		twin.gradParameters = DataNode(g)
+		twin.gradParameters.valid=false
+		twin.gradParameters.parents = {twin}
+		table.insert(twin.children, twin.gradParameters)
+	end
+	
+	
+	function twin.guts()
+		-- The convention is that all gradoutputs can be summed
+		local gradOutput = gradOutputs[1].read()
+		for i=2,#gradOutputs do
+			gradOutput = gradOutput + gradOutputs[i].read()			
+		end
+		print("back", twin.name, gradOutput, nodetable2inputs(node.inputs))			
+		node.module:backward(nodetable2inputs(node.inputs), gradOutput)	
+		print("back2", node.module.gradInput)			
+		twin.output.write(node.module.gradInput)
+		
+	end
+	node.twin = twin	
+	local result = {twin}
+	
+	-- Now that this node has a twin, mabye its parents can get them too (recursively)? 
+	for _,input in ipairs(node.inputs) do
+		-- TODO: this is too simple an assumption, won't work for muptiple inputs/outputs
+		local parent = input.parents[1]
+		if parent then
+			assert(not parent.twin)
+			local r = backwardTwin(parent, twin.output)
+			for _,x in pairs(r) do
+				table.insert(result, x)
+			end
+		end
+	end
+	return result
 end
 
 
@@ -199,15 +277,29 @@ end
 -- A recurrent counter	
 function CounterNode()
 	-- the flipflop is built first
-	fflop = TimeDelayNode(1)
+	local fflop = TimeDelayNode(1)
 	-- the linear transformation does: x <- 1*x+1 
-	mod = nngg.Linear(1,1){fflop.output}	
+	local mod = nngg.Linear(1,1){fflop.output}	
 	-- TODO: this is not best way:
 	mod.module.weight:fill(1) 
 	mod.module.bias:fill(1)	
 	-- the flipflop is connected at the end
 	fflop.connectInput(mod.output)	
 	return groupNodes({fflop, mod}, mod.output)
+end
+
+-- A general-purpose MLP constructor 
+function MultiLayerPerceptron(sizes, input)
+	local layers = {}
+	local last = input
+	for i=2,#sizes do
+		local affine = nngg.Linear(sizes[i-1], sizes[i]){last}
+		local squash = nngg.Tanh(){affine.output}
+		last = squash.output
+		table.insert(layers, affine)
+		table.insert(layers, squash)
+	end
+	return groupNodes(layers, last)
 end
 
 
@@ -261,7 +353,7 @@ end
 
 
 -- Check how are asynchronous updates and queries handled.
-function testValidityPropagation()
+local function testValidityPropagation()
 	local input1 = DataNode()
 	local input2 = DataNode()
 	local mod1 = nngg.Linear(10,10){input1}
@@ -307,7 +399,7 @@ end
 -- Nesting can of groups of nodes can be arbitraily deep
 -- This example recursively builds a deep MLP like that
 -- TODO: also test nested flattening
-function testNesting()
+local function testNesting()
 	local depth = 100
 	local size = 5
 	local base = DataNode()
@@ -322,7 +414,7 @@ function testNesting()
 end
 
 
-function testCounter()
+local function testCounter()
 	local cnode = CounterNode()
 	-- without ticks nothing budges
 	for i=1,3 do
@@ -352,7 +444,7 @@ end
 
 
 -- A simple neural network that produces the square roots of the Fibonacci numbers	
-function testFibonacci()
+local function testFibonacci()
 	-- the flipflop is initialized with (0,1)
 	local init = torch.Tensor(2):zero()
 	init[2] = 1
@@ -375,7 +467,7 @@ end
 
 
 -- Illustrate the LSTM gating
-function testLSTM()
+local function testLSTM()
 	local size=2
 	local datain = DataNode()
 	local ingatein = DataNode()
@@ -422,10 +514,35 @@ function testLSTM()
 end
 
 
+-- Testing a backward pass
+function testBackward()
+	input = DataNode()
+	mlp = MultiLayerPerceptron({1, 11, 3, 3}, input)
+	input.write(lab.ones(1))
+	print(mlp)
+	-- let's do a forward to check the network works
+	print(mlp.output.read())
+	
+	-- now construct the backward layer
+	outerr = DataNode(lab.zeros(3))
+	lasttanh = mlp.nodes[6]
+	firstlinear = mlp.nodes[1]
+	print(lasttanh, lasttanh.output.read():size())
+	r = backwardTwin(lasttanh, outerr)
+	print(groupNodes(r))
+	
+	-- see if the backward works
+	print(lasttanh.twin.output.read())
+	--print(firstlinear, firstlinear.twin)
+	--print(firstlinear.twin.gradParameters.read())
+	
+end
+
 -- run all the tests
-testCounter()
-testValidityPropagation()
-testElman()
-testFibonacci()
-testLSTM()
-testNesting()
+--testCounter()
+--testValidityPropagation()
+--testElman()
+--testFibonacci()
+--testLSTM()
+--testNesting()
+testBackward()
