@@ -6,6 +6,9 @@
 ----------------------------------------------------------
 
 
+-- TODO: copying methods (with/without weight sharing)
+-- TODO: automatic unfolding in time
+
 
 -- Node is the fundamental object of the package. A node:
 --    contains a list of dependents (children)
@@ -62,6 +65,8 @@ end
 -- Data nodes depend only on their data, which is valid as long as it has not 
 -- been overwritten. Note that data can just as well be a closure that generates
 -- or reads something when invoked
+-- TODO: should those nodes know about their size, even before they are valid? 
+--       To help automatic constructions avoid runtime errors? 
 function DataNode(data)
 	local n = Node()
 	n.name = "Data"
@@ -170,7 +175,7 @@ function TimeDelayNode(size, initvalues)
 	
 	-- The node must be connceted to a single datanode input
 	-- (tensor of the pre-specified size)
-	function t.connect(input)
+	function t.connectInput(input)
 		t.input = input
 		t.valid = true
 	end
@@ -201,7 +206,7 @@ function CounterNode()
 	mod.module.weight:fill(1) 
 	mod.module.bias:fill(1)	
 	-- the flipflop is connected at the end
-	fflop.connect(mod.output)	
+	fflop.connectInput(mod.output)	
 	return groupNodes({fflop, mod}, mod.output)
 end
 
@@ -217,11 +222,37 @@ function elmanNode(sizes, input)
 	local mod2 = nngg.Tanh(){mod1.output}
 	local mod3 = nngg.Linear(sizes[2],sizes[3]){mod2.output}
 	-- connecting recurrent link
-	fflop.connect(mod2.output)
+	fflop.connectInput(mod2.output)
 	return groupNodes({fflop, mod0, mod1, mod2, mod3}, mod3.output)	
 end
 
 
+-- Long short-term memory cells (LSTM) are a specialized building block
+-- of recurrent networks, useful whenever long time-lags need to be captured
+-- (information conserved over a prolonged time in the activations).
+-- takes 4 input Var objects, returns the required modules and an output Var
+-- TODO: add peephole connections
+function lstmUnit(size, datain, ingatein, forgetgatein, outgatein)
+	-- all the gate inputs get squashed between [0,1]
+	local ingate = nngg.Sigmoid(){ingatein}
+	local forgetgate = nngg.Sigmoid(){forgetgatein}
+	local outgate = nngg.Sigmoid(){outgatein}
+	-- data is squashed too, then gated
+	local newdata = nngg.Tanh(){datain}
+	local statein = nngg.CMulTable(){ingate.output, newdata.output}
+	-- the inner "carousel" retains the state information indefinitely
+	-- as long as the forgetgate is not used (gated data is added)
+	local fflop = TimeDelayNode(size)
+	local state = nngg.CAddTable(){statein.output, fflop.output}
+	local nextstate = nngg.CMulTable(){forgetgate.output, state.output}
+	fflop.connectInput(nextstate.output)
+	-- one last squashing, of the output
+	local preout = nngg.CMulTable(){outgate.output, state.output}
+	local out = nngg.Tanh(){preout.output}
+	
+	return groupNodes({ingate, forgetgate, outgate, newdata, statein, 
+					   fflop, state, nextstate, preout, out}, out.output)
+end
 
 
 -----------------------------------------------------------------
@@ -273,6 +304,24 @@ function testValidityPropagation()
 end
 
 
+-- Nesting can of groups of nodes can be arbitraily deep
+-- This example recursively builds a deep MLP like that
+-- TODO: also test nested flattening
+function testNesting()
+	local depth = 100
+	local size = 5
+	local base = DataNode()
+	local top = groupNodes({}, base)
+	for _=1,depth do
+		local affine = nngg.Linear(size, size){top.output}
+		local squash = nngg.Tanh(){affine.output}
+		top = groupNodes({top, affine, squash}, squash.output)		
+	end
+	base.write(lab.ones(size))
+	print(top.output.read())
+end
+
+
 function testCounter()
 	local cnode = CounterNode()
 	-- without ticks nothing budges
@@ -313,7 +362,7 @@ function testFibonacci()
 	mod.module.weight:fill(1)
 	mod.module.weight[1][1]=0 
 	mod.module.bias:fill(0)	
-	ff.connect(mod.output)
+	ff.connectInput(mod.output)
 	local omod = nngg.Sqrt(){mod.output}	
 	local fibnode = groupNodes({mod, omod, ff}, omod.output)
 	
@@ -324,12 +373,59 @@ function testFibonacci()
 	end
 end
 
+
+-- Illustrate the LSTM gating
+function testLSTM()
+	local size=2
+	local datain = DataNode()
+	local ingatein = DataNode()
+	local forgetgatein = DataNode()
+	local outgatein = DataNode()
+	local lstmnode = lstmUnit(size, datain, ingatein, forgetgatein, outgatein)
+	local outvar = lstmnode.output 
+	
+	-- input data: [0.01, 0.1] 
+	local incs = lab.ones(size)*0.1
+	incs[1]= 0.02
+	datain.write(incs)
+	
+	-- gates completely open
+	local open = lab.ones(size)*1000
+	ingatein.write(open) 
+	forgetgatein.write(open) 
+	outgatein.write(open)
+	
+	for i=1,10 do
+		print(i, outvar.read()[1], outvar.read()[2])
+		lstmnode.tick()
+	end	
+	print()
+	
+	-- close input gate on one unit 
+	local halfopen = lab.ones(size)*1000
+	halfopen[1] = -1000
+	ingatein.write(halfopen) 
+	for i=1,5 do
+		print(i, outvar.read()[1], outvar.read()[2])
+		lstmnode.tick()
+	end
+	print()
+	
+	-- forget immediately on the other one now 
+	local closed = lab.ones(size)*-1000
+	forgetgatein.write(closed) 
+	for i=1,5 do
+		print(i, outvar.read()[1], outvar.read()[2])
+		lstmnode.tick()
+	end
+	
+end
+
+
 -- run all the tests
 testCounter()
 testValidityPropagation()
 testElman()
 testFibonacci()
-
-
-
-
+testLSTM()
+testNesting()
