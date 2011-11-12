@@ -158,6 +158,30 @@ function Module:__call__(inputs)
 	return n
 end
 
+-- This extends each nn.Criterion class, such that its call operator wraps it in a node
+local Criterion = torch.getmetatable('nn.Criterion')
+function Criterion:__call__(inputs)
+	local n = Node(inputs)
+	n.name = torch.typename(self)
+	n.module = self
+	n.inputs = inputs
+	-- Creating wrappers around anything that can change, 
+	n.output = DataNode(self.output)
+	n.output.valid = false
+	-- and establish the dependencies
+	n.children = {n.output}
+	n.output.parents={n}
+	
+	function n.guts()
+		local ins = nodetable2inputs(n.inputs)
+		-- a criterion always has two inputs
+		n.module:forward(ins[1], ins[2])
+		n.output.write(n.module.output)
+	end
+		
+	return n
+end
+
 -----------------------------------------------------------------
 -- Package functions
 -----------------------------------------------------------------

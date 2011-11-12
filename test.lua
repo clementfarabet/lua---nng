@@ -186,6 +186,19 @@ function tests.backward()
 	print("gradients", firstlinear.twin.gradParameters.read()[1])
 end
 
+-- Testing criterion
+function tests.criterion()
+	input = g.DataNode()
+	target = g.DataNode()
+	mlp = g.MultiLayerPerceptron({10,2}, input)
+	loss = nn.MSECriterion(){input,target}
+	t = lab.zeros(10); t[4] = 1; -- desired target: 4th class
+	input.write(lab.randn(10))
+	target.write(t)
+	print("output", mlp.output.read())
+	print("cost", loss.output.read())
+end
+
 -- Test flatten function
 function tests.flatten()
 	input = g.DataNode()
