@@ -5,8 +5,11 @@
 -- Clement Farabet & Tom Schaul
 --
 -- TODOS:
---  + copying methods (with/without weight sharing)
 --  + automatic unfolding in time (remove time-delays and replicate graph)
+--  + correct bprop generation
+--  + when cloning a node, it's akward to retrieve the input of
+--    the cloned module... How do we do that ? I think that a 'group'
+--    node should be aware of its inputs.
 -----------------------------------------------------------------
 
 -- dependencies
@@ -357,6 +360,19 @@ local function shareParameters(nodes)
 	end
 end
 
+-- Clone node
+local function cloneNode(node, share)
+	local f = torch.MemoryFile()
+	f:writeObject(node)
+	f:seek(1)
+	local cloned = f:readObject()
+	f:close()
+	if share then
+		shareParameters{node,cloned}
+	end
+	return cloned
+end
+
 -- Inspects all the nodes for data marked with a "parameter" flag
 -- and flattens their storage (as well as, symetrically, the storage
 -- of the corresponding derivatives).
@@ -371,6 +387,7 @@ g = {
 	Node = Node, 
 	DataNode = DataNode, 
 	groupNodes = groupNodes,
+	cloneNode = cloneNode,
 	backwardTwin = backwardTwin,
 	flattenNodes = flattenNodes,
 	getParameters = getParameters,

@@ -225,6 +225,24 @@ function tests.share()
 	print(flat)
 end
 
+-- Test cloning
+function tests.clone()
+	input = g.DataNode()
+	sizes = {2, 3, 2}
+	mlp1 = g.MultiLayerPerceptron(sizes, input)
+	mlp2 = g.cloneNode(mlp1)
+	input2 = mlp2.nodes[1].inputs[1]
+	-- let's do a forward with different inputs
+	input.write(lab.randn(sizes[1]))
+	input2.write(lab.randn(sizes[1]))
+	print("forward module1", mlp1.output.read())
+	print("forward module2", mlp2.output.read())
+	-- and then a forward with the same input
+	input2.write(input.read())
+	print("forward module1", mlp1.output.read())
+	print("forward module2", mlp2.output.read())
+end
+
 -- run all the tests
 for k,t in pairs(tests) do
 	print('==================================================')
