@@ -14,7 +14,7 @@ require('torch')
 require('nn')
 
 -----------------------------------------------------------------
--- Classes: Node, DataNode
+-- Classes: Node, DataNode, TimeDelayNode
 -----------------------------------------------------------------
 
 -- Node is the fundamental object of the package. A node:
@@ -89,34 +89,35 @@ local function DataNode(data)
 	return n
 end
 
------------------------------------------------------------------
--- functions, helpers
------------------------------------------------------------------
-
--- Nodes can be grouped together, in a new node (deep nesting is fine).
---     default: a single output
-local function groupNodes(nodes, output)
-	local g = Node()
-	g.nodes = nodes
-	g.output = output
+-- A time-delayed Node permits safely introducing cyles, so it does not need 
+-- to know its inputs upon construction
+local function TimeDelayNode(size, initvalues)
+	local t = Node()
+	t.name = "TimeDelay"
+	if not initvalues then initvalues = lab.zeros(size) end
+	t.output = DataNode(initvalues)
+	t.children = {t.output}
 	
-	-- TODO: something fancier..
-	local s = "Group["
-	for _, n in pairs(nodes) do 
-		if n.name then s = s.." "..n.name end 	
+	-- The node must be connceted to a single datanode input
+	-- (tensor of the pre-specified size)
+	function t.connectInput(input)
+		t.input = input
+		t.valid = true
 	end
-	g.name = s.." ]" 
 	
-	-- Ticks are propagated to all members
-	function g.tick()
-		for _, n in pairs(g.nodes) do
-			if n.tick then n.tick() end
-		end				
+	-- At each time-stpe, copy the input data from the past.
+	function t.tick()
+		t.output.write(torch.Tensor(size):copy(t.input.read()))					
 	end
-	return g
+	return t
 end
 
--- Helper function to make single inputs and tables more transparent (private)
+-----------------------------------------------------------------
+-- Extend nn modules to act as Nodes
+-----------------------------------------------------------------
+
+-- Helper function to make single inputs and tables more 
+-- transparent (private func)
 local function nodetable2inputs(nodetable)
 	if #nodetable == 1 then
 		return nodetable[1].read()
@@ -152,6 +153,33 @@ function Module:__call__(inputs)
 	end
 		
 	return n
+end
+
+-----------------------------------------------------------------
+-- Package functions
+-----------------------------------------------------------------
+
+-- Nodes can be grouped together, in a new node (deep nesting is fine).
+--     default: a single output
+local function groupNodes(nodes, output)
+	local g = Node()
+	g.nodes = nodes
+	g.output = output
+	
+	-- TODO: something fancier..
+	local s = "Group["
+	for _, n in pairs(nodes) do 
+		if n.name then s = s.." "..n.name end 	
+	end
+	g.name = s.." ]" 
+	
+	-- Ticks are propagated to all members
+	function g.tick()
+		for _, n in pairs(g.nodes) do
+			if n.tick then n.tick() end
+		end				
+	end
+	return g
 end
 
 -- Once a node is done (all children are known, and have twins of their own!), 
@@ -336,29 +364,6 @@ local function flattenNodes(nodes)
 	local params = getParameters(nodes)
 	local flat = flattenParameters(params)
 	return flat
-end
-
--- A time-delayed Node permits safely introducing cyles, so it does not need 
--- to know its inputs upon construction
-local function TimeDelayNode(size, initvalues)
-	local t = Node()
-	t.name = "TimeDelay"
-	if not initvalues then initvalues = lab.zeros(size) end
-	t.output = DataNode(initvalues)
-	t.children = {t.output}
-	
-	-- The node must be connceted to a single datanode input
-	-- (tensor of the pre-specified size)
-	function t.connectInput(input)
-		t.input = input
-		t.valid = true
-	end
-	
-	-- At each time-stpe, copy the input data from the past.
-	function t.tick()
-		t.output.write(torch.Tensor(size):copy(t.input.read()))					
-	end
-	return t
 end
 
 -- register functions in package
