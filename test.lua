@@ -5,7 +5,7 @@
 -- dependencies
 require('g')
 
--- tests to run
+-- Tests to run
 tests = {}
 
 -- Check how are asynchronous updates and queries handled.
@@ -184,6 +184,21 @@ function tests.backward()
 	print("lastback", lasttanh.twin.output.read())
 	print("firstback", firstlinear.output.read())
 	print("gradients", firstlinear.twin.gradParameters.read()[1])
+end
+
+-- Test flatten function
+function tests.flatten()
+	input = g.DataNode()
+	sizes = {2, 3, 2}
+	mlp = g.MultiLayerPerceptron(sizes, input)
+	params = g.flattenNodes{mlp}
+	nparams = sizes[1]*sizes[2] + sizes[2] + sizes[2]*sizes[3] + sizes[3]
+	print('nb of parameters = ' .. nparams)
+	mlp.nodes[1].parameters.guts[1]:fill(1)
+	mlp.nodes[1].parameters.guts[2]:fill(2)
+	mlp.nodes[3].parameters.guts[1]:fill(3)
+	mlp.nodes[3].parameters.guts[2]:fill(4)
+	print(params)
 end
 
 -- run all the tests

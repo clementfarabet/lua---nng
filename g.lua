@@ -223,11 +223,95 @@ local function backwardTwin(node, extGradOutput)
 	return result
 end
 
+-- Flatten helper (private function)
+local function flattenParameters(parameters)
+   -- already flat ?
+   local flat = true
+   for k = 2,#parameters do
+      if parameters[k]:storage() ~= parameters[k-1]:storage() then
+         flat = false
+         break
+      end
+   end
+   if flat then
+      local nParameters = 0
+      for k,param in ipairs(parameters) do
+         nParameters = nParameters + param:nElement()
+      end
+      flatParameters = parameters[1].new(parameters[1]:storage())
+      if nParameters ~= flatParameters:nElement() then
+         error('weird parameters: cant deal with them')
+      end
+      return flatParameters
+   end
+   -- compute offsets of each parameter
+   local offsets = {}
+   local sizes = {}
+   local strides = {}
+   local elements = {}
+   local storageOffsets = {}
+   local params = {}
+   local nParameters = 0
+   for k,param in ipairs(parameters) do
+      table.insert(offsets, nParameters+1)
+      table.insert(sizes, param:size())
+      table.insert(strides, param:stride())
+      table.insert(elements, param:nElement())
+      table.insert(storageOffsets, param:storageOffset())
+      local isView = false
+      for i = 1,k-1 do
+         if param:storage() == parameters[i]:storage() then
+            offsets[k] = offsets[i]
+            if storageOffsets[k] ~= storageOffsets[i] or elements[k] ~= elements[i] then
+               error('cannot flatten shared weights with different structures')
+            end
+            isView = true
+            break
+         end
+      end
+      if not isView then
+         nParameters = nParameters + param:nElement()
+      end
+   end
+   -- create flat vector
+   local flatParameters = parameters[1].new(nParameters)
+   local storage = flatParameters:storage()
+   -- reallocate all parameters in flat vector
+   for i = 1,#parameters do
+      local data = parameters[i]:clone()
+      parameters[i]:set(storage, offsets[i], elements[i]):resize(sizes[i],strides[i]):copy(data)
+      data = nil
+      collectgarbage()
+   end
+   -- cleanup
+   collectgarbage()
+   -- return new flat vector that contains all discrete parameters
+   return flatParameters
+end
+
+-- Parameter finder (private function)
+local function getParameters(nodes, params)
+	local params = params or {}
+	for _,node in pairs(nodes) do
+		if node.parameters and node.parameters.guts then
+			for _,p in pairs(node.parameters.guts) do
+				table.insert(params, p)
+			end
+		end
+		if node.nodes then
+			getParameters(node.nodes, params)
+		end
+	end
+	return params
+end
+
 -- Inspects all the nodes for data marked with a "parameter" flag
 -- and flattens their storage (as well as, symetrically, the storage
 -- of the corresponding derivatives).
 local function flattenNodes(nodes)
-	--- TODO
+	local params = getParameters(nodes)
+	local flat = flattenParameters(params)
+	return flat
 end
 
 -- A time-delayed Node permits safely introducing cyles, so it does not need 
