@@ -201,6 +201,30 @@ function tests.flatten()
 	print(params)
 end
 
+-- Test weight sharing
+function tests.share()
+	input = g.DataNode()
+	sizes = {2, 3, 2}
+	mlp1 = g.MultiLayerPerceptron(sizes, input)
+	mlp2 = g.MultiLayerPerceptron(sizes, input)
+	-- share all params btwn two mlps
+	g.shareParameters{mlp1, mlp2}
+	-- flatten them
+	flat = g.flattenNodes{mlp1,mlp2}
+	-- set all params of mlp1:
+	mlp1.nodes[1].parameters.guts[1]:fill(1)
+	mlp1.nodes[1].parameters.guts[2]:fill(2)
+	mlp1.nodes[3].parameters.guts[1]:fill(3)
+	mlp1.nodes[3].parameters.guts[2]:fill(4)
+	-- verify that mlp2's params are good:
+	params = g.getParameters{mlp2}
+	for _,p in ipairs(params) do
+		print(p)
+	end
+	-- print flattened vector
+	print(flat)
+end
+
 -- run all the tests
 for k,t in pairs(tests) do
 	print('==================================================')

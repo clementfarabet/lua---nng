@@ -13,6 +13,10 @@
 require('torch')
 require('nn')
 
+-----------------------------------------------------------------
+-- Classes: Node, DataNode
+-----------------------------------------------------------------
+
 -- Node is the fundamental object of the package. A node:
 --    contains a list of dependents (children)
 --    has a flag specifying whether it's OK to use it (valid)
@@ -85,6 +89,10 @@ local function DataNode(data)
 	return n
 end
 
+-----------------------------------------------------------------
+-- functions, helpers
+-----------------------------------------------------------------
+
 -- Nodes can be grouped together, in a new node (deep nesting is fine).
 --     default: a single output
 local function groupNodes(nodes, output)
@@ -108,7 +116,7 @@ local function groupNodes(nodes, output)
 	return g
 end
 
--- Helper function to make single inputs and tables more transparent
+-- Helper function to make single inputs and tables more transparent (private)
 local function nodetable2inputs(nodetable)
 	if #nodetable == 1 then
 		return nodetable[1].read()
@@ -289,7 +297,7 @@ local function flattenParameters(parameters)
    return flatParameters
 end
 
--- Parameter finder (private function)
+-- Parameter finder
 local function getParameters(nodes, params)
 	local params = params or {}
 	for _,node in pairs(nodes) do
@@ -303,6 +311,22 @@ local function getParameters(nodes, params)
 		end
 	end
 	return params
+end
+
+-- Share parameters: takes a list of nodes, and share parameters
+-- between these nodes. They should have the same structure of course.
+local function shareParameters(nodes)
+	local params = {}
+	for _,n in pairs(nodes) do
+		table.insert(params, getParameters{n})
+	end
+	for i = 2,#params do
+		local ref = params[1]
+		local param = params[i]
+		for k = 1,#param do
+			param[k]:set(ref[k])
+		end
+	end
 end
 
 -- Inspects all the nodes for data marked with a "parameter" flag
@@ -342,9 +366,10 @@ g = {
 	Node = Node, 
 	DataNode = DataNode, 
 	groupNodes = groupNodes,
-	nodetable2inputs = nodetable2inputs, 
 	backwardTwin = backwardTwin,
 	flattenNodes = flattenNodes,
+	getParameters = getParameters,
+	shareParameters = shareParameters,
 	TimeDelayNode = TimeDelayNode
 }
 
