@@ -421,3 +421,6 @@ function g.LstmUnit(size, datain, ingatein, forgetgatein, outgatein)
 	return groupNodes({ingate, forgetgate, outgate, newdata, statein, 
 					   fflop, state, nextstate, preout, out}, out.output)
 end
+
+-- return package
+return g
