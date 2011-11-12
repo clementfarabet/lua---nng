@@ -18,8 +18,8 @@ ELSE(${CMAKE_PROJECT_NAME} STREQUAL "Torch")
   message (STATUS "Found Torch7, installed in: " ${TORCH_PREFIX})
   
   find_package (Torch REQUIRED)
-  SET(INSTALL_PREFIX /lua/nng)
+  SET(INSTALL_PREFIX /lua)
   SET(CINSTALL_PREFIX /lib)
 ENDIF(${CMAKE_PROJECT_NAME} STREQUAL "Torch")
 
-install_files(${INSTALL_PREFIX} init.lua)
+install_files(${INSTALL_PREFIX} g.lua)

@@ -1,15 +1,17 @@
-----------------------------------------------------------
+-----------------------------------------------------------------
 -- General-purpose computation, seen as a graph.  
 -- Encapsulating all kinds of neural networks, and more.
 --
 -- Clement Farabet & Tom Schaul
-----------------------------------------------------------
+--
+-- TODOS:
+--  + copying methods (with/without weight sharing)
+--  + automatic unfolding in time (remove time-delays and replicate graph)
+-----------------------------------------------------------------
 
-
--- TODO: copying methods (with/without weight sharing)
--- TODO: automatic unfolding in time (remove time-delays and replicate graph)
--- 
-
+-- dependencies
+require('torch')
+require('nn')
 
 -- Node is the fundamental object of the package. A node:
 --    contains a list of dependents (children)
@@ -62,13 +64,12 @@ local function Node(inputs)
 	return n
 end
 
-
 -- Data nodes depend only on their data, which is valid as long as it has not 
 -- been overwritten. Note that data can just as well be a closure that generates
 -- or reads something when invoked
 -- TODO: should those nodes know about their size, even before they are valid? 
 --       To help automatic constructions avoid runtime errors? 
-function DataNode(data)
+local function DataNode(data)
 	local n = Node()
 	n.name = "Data"
 	n.guts = data
@@ -84,11 +85,9 @@ function DataNode(data)
 	return n
 end
 
-
-
 -- Nodes can be grouped together, in a new node (deep nesting is fine).
 --     default: a single output
-function groupNodes(nodes, output)
+local function groupNodes(nodes, output)
 	local g = Node()
 	g.nodes = nodes
 	g.output = output
@@ -109,7 +108,6 @@ function groupNodes(nodes, output)
 	return g
 end
 
-
 -- Helper function to make single inputs and tables more transparent
 local function nodetable2inputs(nodetable)
 	if #nodetable == 1 then
@@ -123,21 +121,9 @@ local function nodetable2inputs(nodetable)
 	end
 end
 
-
 -- This extends each nn.Module class, such that its call operator wraps it in a node
-require('nn')
-require('torch')
--- TODO: package management not finished
-nngg = {}
--- import all symbols from nn
-for k,v in pairs(nn) do
-   nngg[k] = v
-end
-
 local Module = torch.getmetatable('nn.Module')
-
-
-function Module:__call__(inputs)	
+function Module:__call__(inputs)
 	local n = Node(inputs)
 	n.name = torch.typename(self)
 	n.module = self
@@ -160,11 +146,9 @@ function Module:__call__(inputs)
 	return n
 end
 
-
-
 -- Once a node is done (all children are known, and have twins of their own!), 
 -- we can create a twin node for the backward pass
-function backwardTwin(node, extGradOutput)
+local function backwardTwin(node, extGradOutput)
 	assert (#node.children >= 1 or extGradOutput)
 	assert (node.module)
 	
@@ -239,18 +223,16 @@ function backwardTwin(node, extGradOutput)
 	return result
 end
 
-
 -- Inspects all the nodes for data marked with a "parameter" flag
 -- and flattens their storage (as well as, symetrically, the storage
 -- of the corresponding derivatives).
-function flattenNodes(nodes)
+local function flattenNodes(nodes)
 	--- TODO
 end
 
-
 -- A time-delayed Node permits safely introducing cyles, so it does not need 
 -- to know its inputs upon construction
-function TimeDelayNode(size, initvalues)
+local function TimeDelayNode(size, initvalues)
 	local t = Node()
 	t.name = "TimeDelay"
 	if not initvalues then initvalues = lab.zeros(size) end
@@ -271,21 +253,27 @@ function TimeDelayNode(size, initvalues)
 	return t
 end
 
-
-
-
+-- register functions in package
+g = {
+	Node = Node, 
+	DataNode = DataNode, 
+	groupNodes = groupNodes,
+	nodetable2inputs = nodetable2inputs, 
+	backwardTwin = backwardTwin,
+	flattenNodes = flattenNodes,
+	TimeDelayNode = TimeDelayNode
+}
 
 -----------------------------------------------------------------
 -- A few examples of composite nodes that can be built
 -----------------------------------------------------------------
 
-
 -- A recurrent counter	
-function CounterNode()
+function g.CounterNode()
 	-- the flipflop is built first
 	local fflop = TimeDelayNode(1)
 	-- the linear transformation does: x <- 1*x+1 
-	local mod = nngg.Linear(1,1){fflop.output}	
+	local mod = nn.Linear(1,1){fflop.output}	
 	-- TODO: this is not best way:
 	mod.module.weight:fill(1) 
 	mod.module.bias:fill(1)	
@@ -295,12 +283,12 @@ function CounterNode()
 end
 
 -- A general-purpose MLP constructor 
-function MultiLayerPerceptron(sizes, input)
+function g.MultiLayerPerceptron(sizes, input)
 	local layers = {}
 	local last = input
 	for i=2,#sizes do
-		local affine = nngg.Linear(sizes[i-1], sizes[i]){last}
-		local squash = nngg.Tanh(){affine.output}
+		local affine = nn.Linear(sizes[i-1], sizes[i]){last}
+		local squash = nn.Tanh(){affine.output}
 		last = squash.output
 		table.insert(layers, affine)
 		table.insert(layers, squash)
@@ -308,255 +296,44 @@ function MultiLayerPerceptron(sizes, input)
 	return groupNodes(layers, last)
 end
 
-
 -- An Elman network has three fully connected layers (in, hidden, out),
 -- with the activations of the hidden layer feeding back into the 
 -- input, with a time-delay.
-function elmanNode(sizes, input)
+function g.ElmanNode(sizes, input)
 	assert (#sizes == 3)
 	local fflop = TimeDelayNode(sizes[2])
-	local mod0 = nngg.JoinTable(1){input, fflop.output}
-	local mod1 = nngg.Linear(sizes[1]+sizes[2],sizes[2]){mod0.output}
-	local mod2 = nngg.Tanh(){mod1.output}
-	local mod3 = nngg.Linear(sizes[2],sizes[3]){mod2.output}
+	local mod0 = nn.JoinTable(1){input, fflop.output}
+	local mod1 = nn.Linear(sizes[1]+sizes[2],sizes[2]){mod0.output}
+	local mod2 = nn.Tanh(){mod1.output}
+	local mod3 = nn.Linear(sizes[2],sizes[3]){mod2.output}
 	-- connecting recurrent link
 	fflop.connectInput(mod2.output)
 	return groupNodes({fflop, mod0, mod1, mod2, mod3}, mod3.output)	
 end
-
 
 -- Long short-term memory cells (LSTM) are a specialized building block
 -- of recurrent networks, useful whenever long time-lags need to be captured
 -- (information conserved over a prolonged time in the activations).
 -- takes 4 input Var objects, returns the required modules and an output Var
 -- TODO: add peephole connections
-function lstmUnit(size, datain, ingatein, forgetgatein, outgatein)
+function g.LstmUnit(size, datain, ingatein, forgetgatein, outgatein)
 	-- all the gate inputs get squashed between [0,1]
-	local ingate = nngg.Sigmoid(){ingatein}
-	local forgetgate = nngg.Sigmoid(){forgetgatein}
-	local outgate = nngg.Sigmoid(){outgatein}
+	local ingate = nn.Sigmoid(){ingatein}
+	local forgetgate = nn.Sigmoid(){forgetgatein}
+	local outgate = nn.Sigmoid(){outgatein}
 	-- data is squashed too, then gated
-	local newdata = nngg.Tanh(){datain}
-	local statein = nngg.CMulTable(){ingate.output, newdata.output}
+	local newdata = nn.Tanh(){datain}
+	local statein = nn.CMulTable(){ingate.output, newdata.output}
 	-- the inner "carousel" retains the state information indefinitely
 	-- as long as the forgetgate is not used (gated data is added)
 	local fflop = TimeDelayNode(size)
-	local state = nngg.CAddTable(){statein.output, fflop.output}
-	local nextstate = nngg.CMulTable(){forgetgate.output, state.output}
+	local state = nn.CAddTable(){statein.output, fflop.output}
+	local nextstate = nn.CMulTable(){forgetgate.output, state.output}
 	fflop.connectInput(nextstate.output)
 	-- one last squashing, of the output
-	local preout = nngg.CMulTable(){outgate.output, state.output}
-	local out = nngg.Tanh(){preout.output}
+	local preout = nn.CMulTable(){outgate.output, state.output}
+	local out = nn.Tanh(){preout.output}
 	
 	return groupNodes({ingate, forgetgate, outgate, newdata, statein, 
 					   fflop, state, nextstate, preout, out}, out.output)
 end
-
-
------------------------------------------------------------------
--- A few basic tests cases (TODO: expand)
------------------------------------------------------------------
-
-
--- Check how are asynchronous updates and queries handled.
-local function testValidityPropagation()
-	local input1 = DataNode()
-	local input2 = DataNode()
-	local mod1 = nngg.Linear(10,10){input1}
-	local mod2 = nngg.Linear(10,10){input2}
-	local mod3 = nngg.JoinTable(1){mod1.output, mod2.output}		
-	local mod4 = nngg.Tanh(){mod3.output}
-	local output2 = mod2.output
-	local output4 = mod4.output
-	local function g1()
-		local l = {'i',input1.valid,input2.valid,
-				   '-m', mod1.valid,mod2.valid,mod3.valid,mod4.valid,
-				   '-o',output2.valid,output4.valid}
-		local s = ''
-		for _,v in ipairs(l) do
-			if v ==true then
-				s = s.."1"
-			elseif v==false then
-				s = s.."0"
-			else
-				s = s..v
-			end
-		end
-		return s
-	end
-	print(g1(), "invalid inputs, invalid outputs") --OK
-	input1.write(lab.randn(10))
-	print(g1(), "valid input1, invalid input2, invalid outputs") --OK
-	input2.write(lab.randn(10))
-	print(g1(), "valid inputs, invalid outputs") --OK
-	output2.read()
-	print(g1(), "valid output2, invalid output3") --OK
-	output4.read()
-	print(g1(), "valid outputs") --OK
-	input1.write(lab.randn(10))
-	print(g1(), "valid output 2, invalid output3") --OK
-	input2.write(lab.randn(10))
-	print(g1(), "invalid outputs") --OK
-	output4.read()
-	print(g1(), "valid outputs") --OK
-end
-
-
--- Nesting can of groups of nodes can be arbitraily deep
--- This example recursively builds a deep MLP like that
--- TODO: also test nested flattening
-local function testNesting()
-	local depth = 100
-	local size = 5
-	local base = DataNode()
-	local top = groupNodes({}, base)
-	for _=1,depth do
-		local affine = nngg.Linear(size, size){top.output}
-		local squash = nngg.Tanh(){affine.output}
-		top = groupNodes({top, affine, squash}, squash.output)		
-	end
-	base.write(lab.ones(size))
-	print(top.output.read())
-end
-
-
-local function testCounter()
-	local cnode = CounterNode()
-	-- without ticks nothing budges
-	for i=1,3 do
-		print(cnode.output.read()[1].."="..1)
-	end
-	-- with ticks it counts
-	for i=2,6 do
-		cnode.tick()	
-		print(cnode.output.read()[1].."="..i, "ticked!")			
-	end	
-end
-
-
--- Basic testing of the network flow in an Elman network
--- note that once set, the input to the net does not change here
-local function testElman()
-	local input1 = DataNode()
-	local en = elmanNode({3,9,2}, input1)
-	input1.write(lab.zeros(3))
-	print(en.output.read()[1], "first pass")
-	print(en.output.read()[1], "first pass (still)")
-	en.tick()
-	print(en.output.read()[1], "second pass")
-	en.tick()
-	print(en.output.read()[1], "third pass")		
-end
-
-
--- A simple neural network that produces the square roots of the Fibonacci numbers	
-local function testFibonacci()
-	-- the flipflop is initialized with (0,1)
-	local init = torch.Tensor(2):zero()
-	init[2] = 1
-	local ff = TimeDelayNode(2, init)
-	-- the linear transformation does: x,y <- y, x+y 
-	local mod = nngg.Linear(2,2){ff.output}
-	mod.module.weight:fill(1)
-	mod.module.weight[1][1]=0 
-	mod.module.bias:fill(0)	
-	ff.connectInput(mod.output)
-	local omod = nngg.Sqrt(){mod.output}	
-	local fibnode = groupNodes({mod, omod, ff}, omod.output)
-	
-	-- let's see if the 12th member of the sequence is indeed 12^2...
-	for i=1,12 do
-		print(i, fibnode.output.read()[1])
-		fibnode.tick()
-	end
-end
-
-
--- Illustrate the LSTM gating
-local function testLSTM()
-	local size=2
-	local datain = DataNode()
-	local ingatein = DataNode()
-	local forgetgatein = DataNode()
-	local outgatein = DataNode()
-	local lstmnode = lstmUnit(size, datain, ingatein, forgetgatein, outgatein)
-	local outvar = lstmnode.output 
-	
-	-- input data: [0.01, 0.1] 
-	local incs = lab.ones(size)*0.1
-	incs[1]= 0.02
-	datain.write(incs)
-	
-	-- gates completely open
-	local open = lab.ones(size)*1000
-	ingatein.write(open) 
-	forgetgatein.write(open) 
-	outgatein.write(open)
-	
-	for i=1,10 do
-		print(i, outvar.read()[1], outvar.read()[2])
-		lstmnode.tick()
-	end	
-	print()
-	
-	-- close input gate on one unit 
-	local halfopen = lab.ones(size)*1000
-	halfopen[1] = -1000
-	ingatein.write(halfopen) 
-	for i=1,5 do
-		print(i, outvar.read()[1], outvar.read()[2])
-		lstmnode.tick()
-	end
-	print()
-	
-	-- forget immediately on the other one now 
-	local closed = lab.ones(size)*-1000
-	forgetgatein.write(closed) 
-	for i=1,5 do
-		print(i, outvar.read()[1], outvar.read()[2])
-		lstmnode.tick()
-	end
-	
-end
-
-
--- Testing a backward pass
-function testBackward()
-	input = DataNode()
-	sizes = {4, 3, 9, 5, 2}
-	mlp = MultiLayerPerceptron(sizes, input)
-	input.write(lab.ones(sizes[1]))
-	-- let's do a forward to check the network works
-	print("forward", mlp.output.read())
-	
-	-- now construct the backward layer
-	outerr = DataNode()
-	lasttanh = mlp.nodes[2*(#sizes-1)]
-	firstlinear = mlp.nodes[1]
-	r = groupNodes(backwardTwin(lasttanh, outerr))	
-	print(r)
-	
-	-- see if the backward works
-	outerr.write(lab.ones(sizes[#sizes]))
-	print("lastback", lasttanh.twin.output.read())
-	print("firstback", firstlinear.output.read())
-	print("gradients", firstlinear.twin.gradParameters.read()[1])
-	
-	
-end
-
--- run all the tests
-testCounter()
-print()
-testValidityPropagation()
-print()
-testElman()
-print()
-testFibonacci()
-print()
-testLSTM()
-print()
-testNesting()
-print()
-testBackward()
-print()
