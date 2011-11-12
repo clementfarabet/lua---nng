@@ -451,6 +451,26 @@ function g.MultiLayerPerceptron(sizes, input)
 	return groupNodes(layers, last)
 end
 
+-- A standard ConvNet
+function g.ConvNet(nfeatures, fanins, filters, poolings, input)
+	local layers = {}
+	local last = input
+	for i=2,#nfeatures do
+		local c = nn.SpatialConvolution(nfeatures[i-1], nfeatures[i], filters[i-1], filters[i-1]){last}
+		table.insert(layers, c)
+		if i ~= #nfeatures then
+			local s = nn.Tanh(){c.output}
+			local p = nn.SpatialMaxPooling(poolings[i-1], poolings[i-1]){s.output}
+			table.insert(layers, s)
+			table.insert(layers, p)
+			last = p.output
+		else
+			last = c.output
+		end
+	end
+	return groupNodes(layers, last)
+end
+
 -- An Elman network has three fully connected layers (in, hidden, out),
 -- with the activations of the hidden layer feeding back into the 
 -- input, with a time-delay.

@@ -186,6 +186,37 @@ function tests.backward()
 	print("gradients", firstlinear.twin.gradParameters.read()[1])
 end
 
+-- Testing a backward pass
+function tests.convnet()
+	-- define convnet
+	input = g.DataNode()
+	features = {3, 8, 16, 32}
+	fanins = {1, 4, 16}
+	filters = {7, 7, 7}
+	poolings = {2, 2}
+	convnet = g.ConvNet(features, fanins, filters, poolings, input)
+	
+	-- and a linear classifier for a 4-class problem
+	reshaper = nn.Reshape(32){convnet.output}
+	classifier = nn.Linear(32, 4){reshaper.output}
+	
+	-- loss
+	target = g.DataNode()
+	logsoftmax = nn.LogSoftMax(){classifier.output}
+	loss = nn.ClassNLLCriterion(){logsoftmax.output, target}
+	
+	-- random input: a 3-channel 46x46 image
+	input.write(lab.randn(3, 46, 46))
+	
+	-- let's do a forward to check that the network works
+	print("forward", logsoftmax.output.read())
+	
+	-- evaluate the loss
+	target.write(3)
+	print("target:", target.read())
+	print("loss:", loss.output.read())
+end
+
 -- Testing criterion
 function tests.criterion()
 	input = g.DataNode()
