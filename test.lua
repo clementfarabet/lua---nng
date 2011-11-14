@@ -304,31 +304,43 @@ function tests.backwardNesting()
 	print("backward", both.twin.output.read())		
 end
 
+-- Non-sequential network structure
+function tests.blockConnected()
+	local sizes = {{3,4}, {5,7},{2,3,2},{17,4}, {2}}
+	local inputs = {}
+	for i, s in ipairs(sizes[1]) do
+		inputs[i] = g.DataNode()
+	end	
+	net = g.BlockConnectedPerceptron(sizes, inputs)		
+	for i, input in ipairs(inputs) do
+		input.write(lab.ones(input.outputsize))
+	end	
+	print("forward", net.output.read())	
+end
+
 -- TODO: test backward with non-sequential graph
-function tests.backwardNonseq()
-	local sizes = {4, 5, 2}
+--function tests.backwardNonseq()
+function backwardNonseq()
+	local sizes = {{3,4}, --{5,7}, {2,3,2}, 
+					{2}}
+	local inputs = {}
+	for i, s in ipairs(sizes[1]) do
+		inputs[i] = g.DataNode()
+	end	
+	net = g.BlockConnectedPerceptron(sizes, inputs)		
+	for i, input in ipairs(inputs) do
+		input.write(lab.ones(input.outputsize))
+	end	
+	print("forward", net.output.read())
 	
 	-- we can start on the output
 	local outerr = g.DataNode()
-	local input = g.DataNode()
-	local mlp = g.MultiLayerPerceptron(sizes, input)
-	local x = g.backwardTwin(mlp.output, outerr)
-	input.write(lab.ones(sizes[1]))	
-	print("forward", mlp.output.read()[1])
-	outerr.write(lab.ones(sizes[#sizes]))		
-	print("backward-last", mlp.nodes[#mlp.nodes].twin.output.read()[1])
-	print("backward", mlp.nodes[1].twin.output.read()[1])
+	local x = g.backwardTwin(net, outerr)
 	
-	-- or call it on the grouping node
-	local outerr = g.DataNode()
-	local input = g.DataNode()
-	local mlp = g.MultiLayerPerceptron(sizes, input)
-	local x = g.backwardTwin(mlp, outerr)
-	input.write(lab.ones(sizes[1]))
-	print("forward", mlp.output.read()[1])
-	outerr.write(lab.ones(sizes[#sizes]))
-	print("backward-last", mlp.nodes[#mlp.nodes].twin.output.read()[1])
-	print("backward", mlp.nodes[1].twin.output.read()[1])		
+	outerr.write(lab.ones(net.output.outputsize))		
+	print("backward-last", net.nodes[#net.nodes].twin, net.nodes[#net.nodes].twin.output.read())
+	print("backward", net.nodes[1].twin, net.nodes[1].twin.output.read())
+	
 end
 
 -- TODO: Test combination of flattening and nesting, and re-flattening, and re-nesting
@@ -347,3 +359,7 @@ for k,t in pairs(tests) do
 	t()
 	print()
 end
+print('==================================================')
+print('All tests done.')
+print('==================================================')
+	

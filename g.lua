@@ -237,7 +237,9 @@ local function buildBackwardNode(node, gradOutputs)
 	function twin.guts()
 		-- The convention is that all gradoutputs can be summed
 		local gradOutput = twin.gradOutputs[1].read()
+		print(twin,1,gradOutput)			
 		for i=2,#twin.gradOutputs do
+			print(twin, i,twin.gradOutputs[i].read())
 			gradOutput = gradOutput + twin.gradOutputs[i].read()			
 		end		
 		twin.output.write(node.module:backward(nodetable2inputs(node.inputs), gradOutput))
@@ -254,10 +256,6 @@ end
 local function backwardTwin(node, extGradOutput, reccall)
 	local result = {}
 
-	-- if the node already has a twin, we're done
-	if node.twin then return {} end
-		
-	
 	-- if the node already has a twin, we're done
 	if node.twin then return {} end
 		
@@ -299,6 +297,7 @@ local function backwardTwin(node, extGradOutput, reccall)
 		-- and if they are, we will use their twins
 		local function getTwins(cn)
 			if cn.twin then
+				-- TODO: if there are multiple outputs, we need to pick just the right one...
 				table.insert(gradOutputs, cn.twin.output)
 			else
 				for _,cc in ipairs(cn.children) do
@@ -504,6 +503,44 @@ function g.MultiLayerPerceptron(sizes, input)
 		table.insert(layers, squash)
 	end
 	return groupNodes(layers, last)
+end
+
+
+-- Construct a network composed of a number of sequential layers,
+-- each layer is composed of a number of parallel, independent (tanh) blocks.
+-- All blocks from one layer are (fully) connected to all blocks of the next.
+function g.BlockConnectedPerceptron(sizes, inputs)
+	assert(#sizes > 1)
+	assert(#inputs == #sizes[1]) 
+	assert(#sizes[#sizes] == 1)
+	
+	-- track sizes of different blocks
+	for i, s in ipairs(sizes[1]) do
+		inputs[i].outputsize = s	
+	end	
+	local last = inputs	
+	local allnodes = {}
+	for i=2,#sizes do
+		local next = {}
+		for s=1,#sizes[i] do
+			local incoming = {}
+			local ss = sizes[i][s]				
+			for l=1,#last do
+				local affine = nn.Linear(last[l].outputsize, ss){last[l]}
+				affine.output.outputsize = ss
+				table.insert(allnodes, affine)
+				table.insert(incoming, affine.output)
+			end
+			local gather = nn.CAddTable()(incoming)
+			local squash = nn.Tanh(){gather.output}
+			table.insert(allnodes, gather)
+			table.insert(allnodes, squash)
+			squash.output.outputsize = ss		
+			table.insert(next, squash.output)			
+		end
+		last=next
+	end
+	return g.groupNodes(allnodes, last[1])
 end
 
 -- A standard ConvNet
