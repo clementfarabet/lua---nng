@@ -253,6 +253,11 @@ end
 --     or 'nil' if a dependency was missing.
 local function backwardTwin(node, extGradOutput, reccall)
 	local result = {}
+
+	-- if the node already has a twin, we're done
+	if node.twin then return {} end
+		
+	
 	-- if the node already has a twin, we're done
 	if node.twin then return {} end
 		
@@ -269,6 +274,7 @@ local function backwardTwin(node, extGradOutput, reccall)
 				if nt==mn.twin then					
 					table.insert(mine, nt)
 					table.remove(twinnodes, i)
+					break
 				end
 			end
 		end					
