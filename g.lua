@@ -143,7 +143,7 @@ function Module:__call__(inputs)
 	-- Creating wrappers around anything that can change, 
 	n.output = DataNode(self.output)
 	n.output.valid = false
-	local p,g = self:parameters()
+	local p,_ = self:parameters()
 	n.parameters = DataNode(p)
 	-- and establish the dependencies
 	table.insert(n.parents, n.parameters)
@@ -189,73 +189,47 @@ end
 -- Nodes can be grouped together, in a new node (deep nesting is fine).
 --     default: a single output
 local function groupNodes(nodes, output)
-	local g = Node()
-	g.nodes = nodes
-	g.output = output
+	local gn = Node()
+	gn.nodes = nodes
+	gn.output = output
 	
 	-- TODO: something fancier..
 	local s = "Group["
 	for _, n in pairs(nodes) do 
 		if n.name then s = s.." "..n.name end 	
 	end
-	g.name = s.." ]" 
+	gn.name = s.." ]" 
 	
 	-- Ticks are propagated to all members
-	function g.tick()
-		for _, n in pairs(g.nodes) do
+	function gn.tick()
+		for _, n in pairs(gn.nodes) do
 			if n.tick then n.tick() end
 		end				
 	end
-	return g
+	return gn
 end
 
--- Once a node is done (all children are known, and have twins of their own!), 
--- we can create a twin node for the backward pass
-local function backwardTwin(node, extGradOutput)
-	assert (#node.children >= 1 or extGradOutput)
+
+-- Builds the twin node for the backward pass
+local function buildBackwardNode(node, gradOutputs)
+	assert (#gradOutputs > 0)
 	assert (node.module)
 	
-	local gradOutputs = {}
-	if extGradOutput then 
-		gradOutputs = {extGradOutput} 
-	end
-			
-	-- The backward pass depends on the forward's being finished
-	-- and on all the children's twins
-	local needed = {node}
-	for _,c in ipairs(node.children) do
-		if c.module then
-			if not c.twin then
-				return {} 
-			end
-			table.insert(needed, c.twin)
-			table.insert(gradOutputs, c.twin.output)
-		else
-			-- TODO: Fix, this makes too strong assumptions?
-			for _,cc in ipairs(c.children) do
-				assert(cc.module)
-				if not cc.twin then
-					return {} 
-				end
-				table.insert(needed, cc.twin)
-				table.insert(gradOutputs, cc.twin.output)				
-			end
-		end
-	end
-	
-	local twin = Node(needed)
+	local twin = Node(gradOutputs)
+	table.insert(twin.parents, node)
+	table.insert(node.children, twin)
 	twin.name = node.name.."twin"
 	
 	-- One or two datanodes depend on the twin 
 	twin.output = DataNode(node.module.gradInput)
 	twin.output.valid=false
-	twin.output.parents = {twin}
-	twin.children = {twin.output}
-	local p,g = node.module:parameters()	
-	if g then
-		twin.gradParameters = DataNode(g)
+	table.insert(twin.output.parents, twin)
+	table.insert(twin.children, twin.output)
+	local _,gp = node.module:parameters()	
+	if gp then
+		twin.gradParameters = DataNode(gp)
 		twin.gradParameters.valid=false
-		twin.gradParameters.parents = {twin}
+		table.insert(twin.gradParameters.parents, twin)
 		table.insert(twin.children, twin.gradParameters)
 	end
 	twin.gradOutputs = gradOutputs
@@ -269,22 +243,97 @@ local function backwardTwin(node, extGradOutput)
 		twin.output.write(node.module:backward(nodetable2inputs(node.inputs), gradOutput))
 	end
 	node.twin = twin	
-	
-	-- Now that this node has a twin, mabye its parents can get them too (recursively)? 
-	local result = {twin}
-	for _,input in ipairs(node.inputs) do
-		-- TODO: this is too simple an assumption, won't work for muptiple inputs/outputs
-		local parent = input.parents[1]
-		if parent then
-			assert(not parent.twin)
-			local r = backwardTwin(parent, twin.output)
-			for _,x in pairs(r) do
-				table.insert(result, x)
+	return twin
+end
+
+
+-- Recursively builds the twin/backward nodes for a network (the starting point 
+--     is a node whose output corresponds to the provided external error)
+--     Returns a list of all twins created,
+--     or 'nil' if a dependency was missing.
+local function backwardTwin(node, extGradOutput, reccall)
+	local result = {}
+	-- if the node already has a twin, we're done
+	if node.twin then return {} end
+		
+	-- nesting case (retains the nesting structure for the backward pass?)
+	local function twinGroups(gn, twinnodes)
+		for _,cn in ipairs(gn.nodes) do
+			if cn.nodes then
+				twinGroups(cn, twinnodes)
 			end
 		end
+		local mine = {}		
+		for i,nt in ipairs(twinnodes) do
+			for _,mn in ipairs(gn.nodes) do
+				if nt==mn.twin then					
+					table.insert(mine, nt)
+					table.remove(twinnodes, i)
+				end
+			end
+		end					
+		gn.twin = groupNodes(mine, gn.nodes[1].twin.output)
+		table.insert(twinnodes, gn.twin)
+	end
+	if node.nodes then
+		result = backwardTwin(node.output, extGradOutput, reccall)	
+		if result then twinGroups(node, result) end
+		return result
+	end 
+	
+	-- standard case (node with a module)
+	if node.module then
+		-- the outputs used come from the children's twins (plus the external one) 
+		local gradOutputs = {}
+		if extGradOutput then 
+			gradOutputs = {extGradOutput} 
+		end
+	
+		-- we make sure all the node's children are usable
+		-- and if they are, we will use their twins
+		local function getTwins(cn)
+			if cn.twin then
+				table.insert(gradOutputs, cn.twin.output)
+			else
+				for _,cc in ipairs(cn.children) do
+					getTwins(cc)
+				end
+			end
+		end
+		for _,cn in ipairs(node.children) do
+			local tmp = backwardTwin(cn, nil, true)
+			if not tmp then return nil end
+		 	getTwins(cn)
+		end
+					
+		-- build a twin for this node
+		buildBackwardNode(node, gradOutputs)
+		table.insert(result, node.twin)
+	end
+	
+	
+	-- Now that this node has a twin, its parents can get them too (recursively)	
+	if reccall then
+		return result 
+	end
+	for _,p in ipairs(node.parents) do
+		local tmp = nil
+		if node.twin then
+			tmp = backwardTwin(p)
+		else
+			-- the external info was not used, so it's passed up one level
+			tmp = backwardTwin(p, extGradOutput)		
+		end
+		if tmp then
+			for _,x in ipairs(tmp) do
+				table.insert(result, x)
+			end
+		end		
 	end
 	return result
+
 end
+
 
 -- Flatten helper (private function)
 local function flattenParameters(parameters)

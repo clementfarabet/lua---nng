@@ -165,28 +165,28 @@ end
 
 -- Testing a backward pass
 function tests.backward()
-	input = g.DataNode()
-	sizes = {4, 3, 9, 5, 2}
-	mlp = g.MultiLayerPerceptron(sizes, input)
+	local input = g.DataNode()
+	local sizes = {4, 3, 9, 5, 2}
+	local mlp = g.MultiLayerPerceptron(sizes, input)
 	input.write(lab.ones(sizes[1]))
 	-- let's do a forward to check the network works
 	print("forward", mlp.output.read())
 	
 	-- now construct the backward layer
-	outerr = g.DataNode()
-	lasttanh = mlp.nodes[2*(#sizes-1)]
-	firstlinear = mlp.nodes[1]
-	r = g.groupNodes(g.backwardTwin(lasttanh, outerr))	
+	local outerr = g.DataNode()
+	local lasttanh = mlp.nodes[2*(#sizes-1)]
+	local firstlinear = mlp.nodes[1]
+	local r = g.groupNodes(g.backwardTwin(lasttanh, outerr))	
 	print(r)
 	
 	-- see if the backward works
 	outerr.write(lab.ones(sizes[#sizes]))
 	print("lastback", lasttanh.twin.output.read())
-	print("firstback", firstlinear.output.read())
+	print("firstback", firstlinear.twin.output.read()[1])
 	print("gradients", firstlinear.twin.gradParameters.read()[1])
 end
 
--- Testing a backward pass
+-- Testing a classical ConvNet
 function tests.convnet()
 	-- define convnet
 	input = g.DataNode()
@@ -286,6 +286,58 @@ function tests.clone()
 	print("forward module1", mlp1.output.read())
 	print("forward module2", mlp2.output.read())
 end
+
+
+-- Test backward with nesting
+function tests.backwardNesting()	
+	local input = g.DataNode()
+	local mlp1 = g.MultiLayerPerceptron({3,7,5}, input)
+	local mlp2 = g.MultiLayerPerceptron({5,6,2}, mlp1.output)
+	local both = g.groupNodes({mlp1, mlp2}, mlp2.output)
+	print(both)
+	input.write(lab.ones(3))	
+	print("forward", both.output.read())
+	
+	local outerr = g.DataNode()
+	g.backwardTwin(both, outerr)
+	outerr.write(lab.ones(2))	
+	print("backward", both.twin.output.read())		
+end
+
+-- TODO: test backward with non-sequential graph
+function tests.backwardNonseq()
+	local sizes = {4, 5, 2}
+	
+	-- we can start on the output
+	local outerr = g.DataNode()
+	local input = g.DataNode()
+	local mlp = g.MultiLayerPerceptron(sizes, input)
+	local x = g.backwardTwin(mlp.output, outerr)
+	input.write(lab.ones(sizes[1]))	
+	print("forward", mlp.output.read()[1])
+	outerr.write(lab.ones(sizes[#sizes]))		
+	print("backward-last", mlp.nodes[#mlp.nodes].twin.output.read()[1])
+	print("backward", mlp.nodes[1].twin.output.read()[1])
+	
+	-- or call it on the grouping node
+	local outerr = g.DataNode()
+	local input = g.DataNode()
+	local mlp = g.MultiLayerPerceptron(sizes, input)
+	local x = g.backwardTwin(mlp, outerr)
+	input.write(lab.ones(sizes[1]))
+	print("forward", mlp.output.read()[1])
+	outerr.write(lab.ones(sizes[#sizes]))
+	print("backward-last", mlp.nodes[#mlp.nodes].twin.output.read()[1])
+	print("backward", mlp.nodes[1].twin.output.read()[1])		
+end
+
+-- TODO: Test combination of flattening and nesting, and re-flattening, and re-nesting
+-- TODO: Test flattening and weight-sharing 
+--       what if the shared weights are part of different graphs that are flattened?
+-- TODO: Test backward with time-delays
+-- TODO: Flattened gradient vector
+-- TODO: Backward building 	invoked by adding a criterion
+
 
 -- run all the tests
 for k,t in pairs(tests) do
