@@ -186,7 +186,7 @@ function tests.backward()
 	print("gradients", firstlinear.twin.gradParameters.read()[1])
 end
 
--- Testing a backward pass
+-- Testing a classical ConvNet
 function tests.convnet()
 	-- define convnet
 	input = g.DataNode()
@@ -286,6 +286,52 @@ function tests.clone()
 	print("forward module1", mlp1.output.read())
 	print("forward module2", mlp2.output.read())
 end
+
+
+-- Test combination of flattening and nesting, and re-flattening, and re-nesting
+
+-- Test flattening and weight-sharing 
+--     what if the shared weights are part of different graphs that are flattened?
+
+-- Test backward with time-delays
+
+-- Test backward with nesting
+
+-- Test backward with non-sequential graph
+function tests.backward2()
+	local sizes = {4, 3, 9, 5, 2}
+	
+	-- we can start on the output
+	local outerr = g.DataNode()
+	local input = g.DataNode()
+	local mlp = g.MultiLayerPerceptron(sizes, input)
+	local x = g.backwardTwin(mlp.output, outerr)
+	print(#x, x[1])
+	input.write(lab.ones(sizes[1]))	
+	print("forward", mlp.output.read())
+	outerr.write(lab.ones(sizes[#sizes]))	
+	print("firstback", mlp.nodes[1].output.read())
+	
+	-- or call it on the grouping node
+	local outerr = g.DataNode()
+	local input = g.DataNode()
+	local mlp = g.MultiLayerPerceptron(sizes, input)
+	local x = g.backwardTwin(mlp, outerr)
+	print(#x, x[1])
+	input.write(lab.ones(sizes[1]))
+	print("forward", mlp.output.read())
+	outerr.write(lab.ones(sizes[#sizes]))
+	print("firstback", mlp.nodes[1].output.read())
+	
+	-- or invoke it by adding a criterion
+		
+end
+
+
+-- Flattened gradient vector
+
+ 
+
 
 -- run all the tests
 for k,t in pairs(tests) do
