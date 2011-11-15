@@ -187,7 +187,8 @@ end
 -----------------------------------------------------------------
 
 -- Nodes can be grouped together, in a new node (deep nesting is fine).
---     default: a single output
+--     default: a single output, (and a single input)
+-- TODO: keep track of its inputs too?
 local function groupNodes(nodes, output)
 	local gn = Node()
 	gn.nodes = nodes
@@ -237,13 +238,33 @@ local function buildBackwardNode(node, gradOutputs)
 	function twin.guts()
 		-- The convention is that all gradoutputs can be summed
 		local gradOutput = twin.gradOutputs[1].read()
-		print(twin,1,gradOutput)			
 		for i=2,#twin.gradOutputs do
-			print(twin, i,twin.gradOutputs[i].read())
 			gradOutput = gradOutput + twin.gradOutputs[i].read()			
 		end		
 		twin.output.write(node.module:backward(nodetable2inputs(node.inputs), gradOutput))
 	end
+	
+	-- if the node has multiple inputs, we will need to provide the proper input-error 
+	local function TableNode(tab, index) 
+		local tabn = DataNode(tab)
+		tabn.name = "Table["..index.."]"
+		function tabn.guts()
+			return tab.read()[index]
+		end
+		return tabn
+	end
+	function twin.getOutputFor(input)
+		if #node.inputs <= 1 then
+			return twin.output
+		else
+			for index, inp in ipairs(node.inputs) do
+				if inp.guts==input.guts then 
+					return TableNode(twin.output, index)
+				end
+			end
+		end
+	end
+	
 	node.twin = twin	
 	return twin
 end
@@ -275,8 +296,13 @@ local function backwardTwin(node, extGradOutput, reccall)
 					break
 				end
 			end
-		end					
+		end	
+		-- TODO: this assumes a groupNode as a sinlge node where all the 
+		--       inputs enter... not general enough							
 		gn.twin = groupNodes(mine, gn.nodes[1].twin.output)
+		function gn.twin.getOutputFor(input)
+			return gn.nodes[1].getOutputFor(input)
+		end
 		table.insert(twinnodes, gn.twin)
 	end
 	if node.nodes then
@@ -297,9 +323,8 @@ local function backwardTwin(node, extGradOutput, reccall)
 		-- and if they are, we will use their twins
 		local function getTwins(cn)
 			if cn.twin then
-				-- TODO: if there are multiple outputs, we need to pick just the right one...
-				table.insert(gradOutputs, cn.twin.output)
-			else
+				table.insert(gradOutputs, cn.twin.getOutputFor(node.output))
+			elseif not cn.module then
 				for _,cc in ipairs(cn.children) do
 					getTwins(cc)
 				end
@@ -321,7 +346,7 @@ local function backwardTwin(node, extGradOutput, reccall)
 	if reccall then
 		return result 
 	end
-	for _,p in ipairs(node.parents) do
+	for _,p in ipairs(node.parents) do			
 		local tmp = nil
 		if node.twin then
 			tmp = backwardTwin(p)
@@ -531,9 +556,14 @@ function g.BlockConnectedPerceptron(sizes, inputs)
 				table.insert(allnodes, affine)
 				table.insert(incoming, affine.output)
 			end
-			local gather = nn.CAddTable()(incoming)
-			local squash = nn.Tanh(){gather.output}
-			table.insert(allnodes, gather)
+			local squash
+			if #incoming > 1 then
+				local gather = nn.CAddTable()(incoming)
+				table.insert(allnodes, gather)
+				squash = nn.Tanh(){gather.output}
+			else
+				squash = nn.Tanh()(incoming)			
+			end			
 			table.insert(allnodes, squash)
 			squash.output.outputsize = ss		
 			table.insert(next, squash.output)			

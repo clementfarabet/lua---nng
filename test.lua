@@ -215,6 +215,9 @@ function tests.convnet()
 	target.write(3)
 	print("target:", target.read())
 	print("loss:", loss.output.read())
+	
+	-- verify the backward construction works too
+	g.backwardTwin(convnet, g.DataNode())
 end
 
 -- Testing criterion
@@ -242,7 +245,7 @@ function tests.flatten()
 	mlp.nodes[1].parameters.guts[2]:fill(2)
 	mlp.nodes[3].parameters.guts[1]:fill(3)
 	mlp.nodes[3].parameters.guts[2]:fill(4)
-	print(params)
+	print(params)	
 end
 
 -- Test weight sharing
@@ -285,6 +288,10 @@ function tests.clone()
 	input2.write(input.read())
 	print("forward module1", mlp1.output.read())
 	print("forward module2", mlp2.output.read())
+		
+	-- verify the backward construction is not affected
+	g.backwardTwin(mlp1, g.DataNode())
+	g.backwardTwin(mlp2, g.DataNode())
 end
 
 
@@ -304,43 +311,40 @@ function tests.backwardNesting()
 	print("backward", both.twin.output.read())		
 end
 
--- Non-sequential network structure
+-- Test non-sequential network structure
 function tests.blockConnected()
-	local sizes = {{3,4}, {5,7},{2,3,2},{17,4}, {2}}
+	local sizes = {{3,4}, {5,7}, {19}, {2,3,2}, {2}}
 	local inputs = {}
 	for i, s in ipairs(sizes[1]) do
 		inputs[i] = g.DataNode()
 	end	
-	net = g.BlockConnectedPerceptron(sizes, inputs)		
+	local net = g.BlockConnectedPerceptron(sizes, inputs)	
+	print(net)	
 	for i, input in ipairs(inputs) do
 		input.write(lab.ones(input.outputsize))
 	end	
 	print("forward", net.output.read())	
 end
 
--- TODO: test backward with non-sequential graph
---function tests.backwardNonseq()
-function backwardNonseq()
-	local sizes = {{3,4}, --{5,7}, {2,3,2}, 
-					{2}}
+-- Test backward with non-sequential graph
+function tests.backwardNonseq()
+	local sizes = {{5,3}, {2}, {4,3},{2, 3,2}, {1}}
 	local inputs = {}
 	for i, s in ipairs(sizes[1]) do
 		inputs[i] = g.DataNode()
 	end	
-	net = g.BlockConnectedPerceptron(sizes, inputs)		
+	local net = g.BlockConnectedPerceptron(sizes, inputs)
 	for i, input in ipairs(inputs) do
 		input.write(lab.ones(input.outputsize))
 	end	
 	print("forward", net.output.read())
 	
-	-- we can start on the output
+	-- backward
 	local outerr = g.DataNode()
-	local x = g.backwardTwin(net, outerr)
-	
+	g.backwardTwin(net, outerr)	
 	outerr.write(lab.ones(net.output.outputsize))		
 	print("backward-last", net.nodes[#net.nodes].twin, net.nodes[#net.nodes].twin.output.read())
-	print("backward", net.nodes[1].twin, net.nodes[1].twin.output.read())
-	
+	print("backward", net.nodes[1].twin, net.nodes[1].twin.output.read()[1])	
 end
 
 -- TODO: Test combination of flattening and nesting, and re-flattening, and re-nesting
@@ -348,7 +352,7 @@ end
 --       what if the shared weights are part of different graphs that are flattened?
 -- TODO: Test backward with time-delays
 -- TODO: Flattened gradient vector
--- TODO: Backward building 	invoked by adding a criterion
+-- TODO: Backward building invoked by adding a criterion
 
 
 
