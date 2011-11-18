@@ -158,29 +158,6 @@ function Module:__call__(inputs)
 	return n
 end
 
--- This extends each nn.Criterion class, such that its call operator wraps it in a node
-local Criterion = torch.getmetatable('nn.Criterion')
-function Criterion:__call__(inputs)
-	local n = Node(inputs)
-	n.name = torch.typename(self)
-	n.module = self
-	n.inputs = inputs
-	-- Creating wrappers around anything that can change, 
-	n.output = DataNode(self.output)
-	n.output.valid = false
-	-- and establish the dependencies
-	n.children = {n.output}
-	n.output.parents={n}
-	
-	function n.guts()
-		local ins = nodetable2inputs(n.inputs)
-		-- a criterion always has two inputs
-		n.module:forward(ins[1], ins[2])
-		n.output.write(n.module.output)
-	end
-		
-	return n
-end
 
 -----------------------------------------------------------------
 -- Package functions
@@ -362,6 +339,50 @@ local function backwardTwin(node, extGradOutput, reccall)
 	end
 	return result
 
+end
+
+
+-- This extends each nn.Criterion class, such that its call operator wraps it in a node
+local Criterion = torch.getmetatable('nn.Criterion')
+function Criterion:__call__(inputs)
+	local cnode = Node(inputs)
+	cnode.name = torch.typename(self)
+	cnode.module = self
+	cnode.inputs = inputs
+	-- Creating wrappers around anything that can change, 
+	cnode.output = DataNode(self.output)
+	cnode.output.valid = false
+	-- and establish the dependencies
+	cnode.children = {cnode.output}
+	cnode.output.parents={cnode}
+	
+	function cnode.guts()
+		local ins = nodetable2inputs(cnode.inputs)
+		-- a criterion always has two inputs
+		cnode.module:forward(ins[1], ins[2])
+		cnode.output.write(cnode.module.output)
+	end
+	
+	-- we can build the corresponding backward node immediately too 
+	local twin = Node(inputs)
+	table.insert(twin.parents, cnode)
+	table.insert(cnode.children, twin)
+	twin.name = cnode.name.."twin"
+	twin.module = self
+	twin.output = DataNode(self.gradInput)
+	twin.output.valid=false
+	table.insert(twin.output.parents, twin)
+	table.insert(twin.children, twin.output)	
+	function twin.guts()
+		local ins = nodetable2inputs(cnode.inputs)
+		twin.output.write(twin.module:backward(ins[1], ins[2]))
+	end
+	function twin.getOutputFor(input) return twin.output end
+	cnode.twin = twin  
+	
+	-- now also establish backward connections from the first of its inputs	
+	local twins = backwardTwin(inputs[1], twin.output)
+	return cnode, twins
 end
 
 

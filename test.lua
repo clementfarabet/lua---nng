@@ -98,8 +98,7 @@ end
 -- A simple neural network that produces the square roots of the Fibonacci numbers	
 function tests.fibonacci()
 	-- the flipflop is initialized with (0,1)
-	local init = torch.Tensor(2):zero()
-	init[2] = 1
+	local init = torch.Tensor(2):zero(); init[2] = 1
 	local ff = g.TimeDelayNode(2, init)
 	-- the linear transformation does: x,y <- y, x+y 
 	local mod = nn.Linear(2,2){ff.output}
@@ -128,8 +127,7 @@ function tests.LSTM()
 	local outvar = lstmnode.output 
 	
 	-- input data: [0.01, 0.1] 
-	local incs = lab.ones(size)*0.1
-	incs[1]= 0.02
+	local incs = lab.ones(size)*0.1; incs[1]= 0.02
 	datain.write(incs)
 	
 	-- gates completely open
@@ -145,8 +143,7 @@ function tests.LSTM()
 	print()
 	
 	-- close input gate on one unit 
-	local halfopen = lab.ones(size)*1000
-	halfopen[1] = -1000
+	local halfopen = lab.ones(size)*1000; halfopen[1] = -1000
 	ingatein.write(halfopen) 
 	for i=1,5 do
 		print(i, outvar.read()[1], outvar.read()[2])
@@ -189,21 +186,21 @@ end
 -- Testing a classical ConvNet
 function tests.convnet()
 	-- define convnet
-	input = g.DataNode()
-	features = {3, 8, 16, 32}
-	fanins = {1, 4, 16}
-	filters = {7, 7, 7}
-	poolings = {2, 2}
-	convnet = g.ConvNet(features, fanins, filters, poolings, input)
+	local input = g.DataNode()
+	local features = {3, 8, 16, 32}
+	local fanins = {1, 4, 16}
+	local filters = {7, 7, 7}
+	local poolings = {2, 2}
+	local convnet = g.ConvNet(features, fanins, filters, poolings, input)
 	
 	-- and a linear classifier for a 4-class problem
-	reshaper = nn.Reshape(32){convnet.output}
-	classifier = nn.Linear(32, 4){reshaper.output}
+	local reshaper = nn.Reshape(32){convnet.output}
+	local classifier = nn.Linear(32, 4){reshaper.output}
 	
 	-- loss
-	target = g.DataNode()
-	logsoftmax = nn.LogSoftMax(){classifier.output}
-	loss = nn.ClassNLLCriterion(){logsoftmax.output, target}
+	local target = g.DataNode()
+	local logsoftmax = nn.LogSoftMax(){classifier.output}
+	local loss = nn.ClassNLLCriterion(){logsoftmax.output, target}
 	
 	-- random input: a 3-channel 46x46 image
 	input.write(lab.randn(3, 46, 46))
@@ -222,24 +219,23 @@ end
 
 -- Testing criterion
 function tests.criterion()
-	input = g.DataNode()
-	target = g.DataNode()
-	mlp = g.MultiLayerPerceptron({10,2}, input)
-	loss = nn.MSECriterion(){input,target}
-	t = lab.zeros(10); t[4] = 1; -- desired target: 4th class
+	local input = g.DataNode()
+	local target = g.DataNode()
+	local loss = nn.MSECriterion(){input,target}
+	local t = lab.zeros(10); t[4] = 1; -- desired target: 4th class
 	input.write(lab.randn(10))
 	target.write(t)
-	print("output", mlp.output.read())
-	print("cost", loss.output.read())
+	print("output", input.read())
+	print("cost", loss.output.read())	
 end
 
 -- Test flatten function
 function tests.flatten()
-	input = g.DataNode()
-	sizes = {2, 3, 2}
-	mlp = g.MultiLayerPerceptron(sizes, input)
-	params = g.flattenNodes{mlp}
-	nparams = sizes[1]*sizes[2] + sizes[2] + sizes[2]*sizes[3] + sizes[3]
+	local input = g.DataNode()
+	local sizes = {2, 3, 2}
+	local mlp = g.MultiLayerPerceptron(sizes, input)
+	local params = g.flattenNodes{mlp}
+	local nparams = sizes[1]*sizes[2] + sizes[2] + sizes[2]*sizes[3] + sizes[3]
 	print('nb of parameters = ' .. nparams)
 	mlp.nodes[1].parameters.guts[1]:fill(1)
 	mlp.nodes[1].parameters.guts[2]:fill(2)
@@ -250,21 +246,21 @@ end
 
 -- Test weight sharing
 function tests.share()
-	input = g.DataNode()
-	sizes = {2, 3, 2}
-	mlp1 = g.MultiLayerPerceptron(sizes, input)
-	mlp2 = g.MultiLayerPerceptron(sizes, input)
+	local input = g.DataNode()
+	local sizes = {2, 3, 2}
+	local mlp1 = g.MultiLayerPerceptron(sizes, input)
+	local mlp2 = g.MultiLayerPerceptron(sizes, input)
 	-- share all params btwn two mlps
 	g.shareParameters{mlp1, mlp2}
 	-- flatten them
-	flat = g.flattenNodes{mlp1,mlp2}
+	local flat = g.flattenNodes{mlp1,mlp2}
 	-- set all params of mlp1:
 	mlp1.nodes[1].parameters.guts[1]:fill(1)
 	mlp1.nodes[1].parameters.guts[2]:fill(2)
 	mlp1.nodes[3].parameters.guts[1]:fill(3)
 	mlp1.nodes[3].parameters.guts[2]:fill(4)
 	-- verify that mlp2's params are good:
-	params = g.getParameters{mlp2}
+	local params = g.getParameters{mlp2}
 	for _,p in ipairs(params) do
 		print(p)
 	end
@@ -274,11 +270,11 @@ end
 
 -- Test cloning
 function tests.clone()
-	input = g.DataNode()
-	sizes = {2, 3, 2}
-	mlp1 = g.MultiLayerPerceptron(sizes, input)
-	mlp2 = g.cloneNode(mlp1)
-	input2 = mlp2.nodes[1].inputs[1]
+	local input = g.DataNode()
+	local sizes = {2, 3, 2}
+	local mlp1 = g.MultiLayerPerceptron(sizes, input)
+	local mlp2 = g.cloneNode(mlp1)
+	local input2 = mlp2.nodes[1].inputs[1]
 	-- let's do a forward with different inputs
 	input.write(lab.randn(sizes[1]))
 	input2.write(lab.randn(sizes[1]))
@@ -347,12 +343,32 @@ function tests.backwardNonseq()
 	print("backward", net.nodes[1].twin, net.nodes[1].twin.output.read()[1])	
 end
 
+
+-- Backward building invoked by adding a criterion
+function tests.addCriterion()	
+	local input = g.DataNode()
+	local sizes = {2, 3, 2}
+	local mlp = g.MultiLayerPerceptron(sizes, input)
+	-- let's say we have an autoencoder, so the output's target equals the input
+	local target = input
+	local loss, twins = nn.MSECriterion(){mlp.output,target}
+	print(twins)
+	input.write(lab.randn(2))
+	print("output", input.read())
+	print("cost", loss.output.read())
+	-- as the backward pass was built automatically, we can do this	
+	print("inerr1", mlp.nodes[1].twin.output.read())
+	print("inerr2", mlp.nodes[2].twin.output.read())
+	print("inerr3", mlp.nodes[3].twin.output.read())
+end
+
+
+
 -- TODO: Test combination of flattening and nesting, and re-flattening, and re-nesting
 -- TODO: Test flattening and weight-sharing 
 --       what if the shared weights are part of different graphs that are flattened?
 -- TODO: Test backward with time-delays
 -- TODO: Flattened gradient vector
--- TODO: Backward building invoked by adding a criterion
 
 
 
