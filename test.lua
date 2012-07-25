@@ -2,16 +2,16 @@
 -- A few basic tests cases (TODO: expand)
 -----------------------------------------------------------------
 
--- dependencies
-require('g')
+-- require nng lib
+require 'nng'
 
 -- Tests to run
 tests = {}
 
 -- Check how are asynchronous updates and queries handled.
 function tests.validityPropagation()
-	local input1 = g.DataNode()
-	local input2 = g.DataNode()
+	local input1 = nng.DataNode()
+	local input2 = nng.DataNode()
 	local mod1 = nn.Linear(10,10){input1}
 	local mod2 = nn.Linear(10,10){input2}
 	local mod3 = nn.JoinTable(1){mod1.output, mod2.output}		
@@ -35,17 +35,17 @@ function tests.validityPropagation()
 		return s
 	end
 	print(g1(), "invalid inputs, invalid outputs") --OK
-	input1.write(lab.randn(10))
+	input1.write(torch.randn(10))
 	print(g1(), "valid input1, invalid input2, invalid outputs") --OK
-	input2.write(lab.randn(10))
+	input2.write(torch.randn(10))
 	print(g1(), "valid inputs, invalid outputs") --OK
 	output2.read()
 	print(g1(), "valid output2, invalid output3") --OK
 	output4.read()
 	print(g1(), "valid outputs") --OK
-	input1.write(lab.randn(10))
+	input1.write(torch.randn(10))
 	print(g1(), "valid output 2, invalid output3") --OK
-	input2.write(lab.randn(10))
+	input2.write(torch.randn(10))
 	print(g1(), "invalid outputs") --OK
 	output4.read()
 	print(g1(), "valid outputs") --OK
@@ -57,19 +57,19 @@ end
 function tests.nesting()
 	local depth = 100
 	local size = 5
-	local base = g.DataNode()
-	local top = g.groupNodes({}, base)
+	local base = nng.DataNode()
+	local top = nng.groupNodes({}, base)
 	for _=1,depth do
 		local affine = nn.Linear(size, size){top.output}
 		local squash = nn.Tanh(){affine.output}
-		top = g.groupNodes({top, affine, squash}, squash.output)		
+		top = nng.groupNodes({top, affine, squash}, squash.output)		
 	end
-	base.write(lab.ones(size))
+	base.write(torch.ones(size))
 	print(top.output.read())
 end
 
 function tests.counter()
-	local cnode = g.CounterNode()
+	local cnode = nng.CounterNode()
 	-- without ticks nothing budges
 	for i=1,3 do
 		print(cnode.output.read()[1].."="..1)
@@ -84,9 +84,9 @@ end
 -- Basic testing of the network flow in an Elman network
 -- note that once set, the input to the net does not change here
 function tests.elman()
-	local input1 = g.DataNode()
-	local en = g.ElmanNode({3,9,2}, input1)
-	input1.write(lab.zeros(3))
+	local input1 = nng.DataNode()
+	local en = nng.ElmanNode({3,9,2}, input1)
+	input1.write(torch.zeros(3))
 	print(en.output.read()[1], "first pass")
 	print(en.output.read()[1], "first pass (still)")
 	en.tick()
@@ -99,7 +99,7 @@ end
 function tests.fibonacci()
 	-- the flipflop is initialized with (0,1)
 	local init = torch.Tensor(2):zero(); init[2] = 1
-	local ff = g.TimeDelayNode(2, init)
+	local ff = nng.TimeDelayNode(2, init)
 	-- the linear transformation does: x,y <- y, x+y 
 	local mod = nn.Linear(2,2){ff.output}
 	mod.module.weight:fill(1)
@@ -107,7 +107,7 @@ function tests.fibonacci()
 	mod.module.bias:fill(0)	
 	ff.connectInput(mod.output)
 	local omod = nn.Sqrt(){mod.output}	
-	local fibnode = g.groupNodes({mod, omod, ff}, omod.output)
+	local fibnode = nng.groupNodes({mod, omod, ff}, omod.output)
 	
 	-- let's see if the 12th member of the sequence is indeed 12^2...
 	for i=1,12 do
@@ -119,19 +119,19 @@ end
 -- Illustrate the LSTM gating
 function tests.LSTM()
 	local size=2
-	local datain = g.DataNode()
-	local ingatein = g.DataNode()
-	local forgetgatein = g.DataNode()
-	local outgatein = g.DataNode()
-	local lstmnode = g.LstmUnit(size, datain, ingatein, forgetgatein, outgatein)
+	local datain = nng.DataNode()
+	local ingatein = nng.DataNode()
+	local forgetgatein = nng.DataNode()
+	local outgatein = nng.DataNode()
+	local lstmnode = nng.LstmUnit(size, datain, ingatein, forgetgatein, outgatein)
 	local outvar = lstmnode.output 
 	
 	-- input data: [0.01, 0.1] 
-	local incs = lab.ones(size)*0.1; incs[1]= 0.02
+	local incs = torch.ones(size)*0.1; incs[1]= 0.02
 	datain.write(incs)
 	
 	-- gates completely open
-	local open = lab.ones(size)*1000
+	local open = torch.ones(size)*1000
 	ingatein.write(open) 
 	forgetgatein.write(open) 
 	outgatein.write(open)
@@ -143,7 +143,7 @@ function tests.LSTM()
 	print()
 	
 	-- close input gate on one unit 
-	local halfopen = lab.ones(size)*1000; halfopen[1] = -1000
+	local halfopen = torch.ones(size)*1000; halfopen[1] = -1000
 	ingatein.write(halfopen) 
 	for i=1,5 do
 		print(i, outvar.read()[1], outvar.read()[2])
@@ -152,7 +152,7 @@ function tests.LSTM()
 	print()
 	
 	-- forget immediately on the other one now 
-	local closed = lab.ones(size)*-1000
+	local closed = torch.ones(size)*-1000
 	forgetgatein.write(closed) 
 	for i=1,5 do
 		print(i, outvar.read()[1], outvar.read()[2])
@@ -162,22 +162,22 @@ end
 
 -- Testing a backward pass
 function tests.backward()
-	local input = g.DataNode()
+	local input = nng.DataNode()
 	local sizes = {4, 3, 9, 5, 2}
-	local mlp = g.MultiLayerPerceptron(sizes, input)
-	input.write(lab.ones(sizes[1]))
+	local mlp = nng.MultiLayerPerceptron(sizes, input)
+	input.write(torch.ones(sizes[1]))
 	-- let's do a forward to check the network works
 	print("forward", mlp.output.read())
 	
 	-- now construct the backward layer
-	local outerr = g.DataNode()
+	local outerr = nng.DataNode()
 	local lasttanh = mlp.nodes[2*(#sizes-1)]
 	local firstlinear = mlp.nodes[1]
-	local r = g.groupNodes(g.backwardTwin(lasttanh, outerr))	
+	local r = nng.groupNodes(nng.backwardTwin(lasttanh, outerr))	
 	print(r)
 	
 	-- see if the backward works
-	outerr.write(lab.ones(sizes[#sizes]))
+	outerr.write(torch.ones(sizes[#sizes]))
 	print("lastback", lasttanh.twin.output.read())
 	print("firstback", firstlinear.twin.output.read()[1])
 	print("gradients", firstlinear.twin.gradParameters.read()[1])
@@ -186,24 +186,24 @@ end
 -- Testing a classical ConvNet
 function tests.convnet()
 	-- define convnet
-	local input = g.DataNode()
+	local input = nng.DataNode()
 	local features = {3, 8, 16, 32}
 	local fanins = {1, 4, 16}
 	local filters = {7, 7, 7}
 	local poolings = {2, 2}
-	local convnet = g.ConvNet(features, fanins, filters, poolings, input)
+	local convnet = nng.ConvNet(features, fanins, filters, poolings, input)
 	
 	-- and a linear classifier for a 4-class problem
 	local reshaper = nn.Reshape(32){convnet.output}
 	local classifier = nn.Linear(32, 4){reshaper.output}
 	
 	-- loss
-	local target = g.DataNode()
+	local target = nng.DataNode()
 	local logsoftmax = nn.LogSoftMax(){classifier.output}
 	local loss = nn.ClassNLLCriterion(){logsoftmax.output, target}
 	
 	-- random input: a 3-channel 46x46 image
-	input.write(lab.randn(3, 46, 46))
+	input.write(torch.randn(3, 46, 46))
 	
 	-- let's do a forward to check that the network works
 	print("forward", logsoftmax.output.read())
@@ -214,16 +214,16 @@ function tests.convnet()
 	print("loss:", loss.output.read())
 	
 	-- verify the backward construction works too
-	g.backwardTwin(convnet, g.DataNode())
+	nng.backwardTwin(convnet, nng.DataNode())
 end
 
 -- Testing criterion
 function tests.criterion()
-	local input = g.DataNode()
-	local target = g.DataNode()
+	local input = nng.DataNode()
+	local target = nng.DataNode()
 	local loss = nn.MSECriterion(){input,target}
-	local t = lab.zeros(10); t[4] = 1; -- desired target: 4th class
-	input.write(lab.randn(10))
+	local t = torch.zeros(10); t[4] = 1; -- desired target: 4th class
+	input.write(torch.randn(10))
 	target.write(t)
 	print("output", input.read())
 	print("cost", loss.output.read())	
@@ -231,10 +231,10 @@ end
 
 -- Test flatten function
 function tests.flatten()
-	local input = g.DataNode()
+	local input = nng.DataNode()
 	local sizes = {2, 3, 2}
-	local mlp = g.MultiLayerPerceptron(sizes, input)
-	local params = g.flattenNodes{mlp}
+	local mlp = nng.MultiLayerPerceptron(sizes, input)
+	local params = nng.flattenNodes{mlp}
 	local nparams = sizes[1]*sizes[2] + sizes[2] + sizes[2]*sizes[3] + sizes[3]
 	print('nb of parameters = ' .. nparams)
 	mlp.nodes[1].parameters.guts[1]:fill(1)
@@ -246,21 +246,21 @@ end
 
 -- Test weight sharing
 function tests.share()
-	local input = g.DataNode()
+	local input = nng.DataNode()
 	local sizes = {2, 3, 2}
-	local mlp1 = g.MultiLayerPerceptron(sizes, input)
-	local mlp2 = g.MultiLayerPerceptron(sizes, input)
+	local mlp1 = nng.MultiLayerPerceptron(sizes, input)
+	local mlp2 = nng.MultiLayerPerceptron(sizes, input)
 	-- share all params btwn two mlps
-	g.shareParameters{mlp1, mlp2}
+	nng.shareParameters{mlp1, mlp2}
 	-- flatten them
-	local flat = g.flattenNodes{mlp1,mlp2}
+	local flat = nng.flattenNodes{mlp1,mlp2}
 	-- set all params of mlp1:
 	mlp1.nodes[1].parameters.guts[1]:fill(1)
 	mlp1.nodes[1].parameters.guts[2]:fill(2)
 	mlp1.nodes[3].parameters.guts[1]:fill(3)
 	mlp1.nodes[3].parameters.guts[2]:fill(4)
 	-- verify that mlp2's params are good:
-	local params = g.getParameters{mlp2}
+	local params = nng.getParameters{mlp2}
 	for _,p in ipairs(params) do
 		print(p)
 	end
@@ -270,14 +270,14 @@ end
 
 -- Test cloning
 function tests.clone()
-	local input = g.DataNode()
+	local input = nng.DataNode()
 	local sizes = {2, 3, 2}
-	local mlp1 = g.MultiLayerPerceptron(sizes, input)
-	local mlp2 = g.cloneNode(mlp1)
+	local mlp1 = nng.MultiLayerPerceptron(sizes, input)
+	local mlp2 = nng.cloneNode(mlp1)
 	local input2 = mlp2.nodes[1].inputs[1]
 	-- let's do a forward with different inputs
-	input.write(lab.randn(sizes[1]))
-	input2.write(lab.randn(sizes[1]))
+	input.write(torch.randn(sizes[1]))
+	input2.write(torch.randn(sizes[1]))
 	print("forward module1", mlp1.output.read())
 	print("forward module2", mlp2.output.read())
 	-- and then a forward with the same input
@@ -286,24 +286,24 @@ function tests.clone()
 	print("forward module2", mlp2.output.read())
 		
 	-- verify the backward construction is not affected
-	g.backwardTwin(mlp1, g.DataNode())
-	g.backwardTwin(mlp2, g.DataNode())
+	nng.backwardTwin(mlp1, nng.DataNode())
+	nng.backwardTwin(mlp2, nng.DataNode())
 end
 
 
 -- Test backward with nesting
 function tests.backwardNesting()	
-	local input = g.DataNode()
-	local mlp1 = g.MultiLayerPerceptron({3,7,5}, input)
-	local mlp2 = g.MultiLayerPerceptron({5,6,2}, mlp1.output)
-	local both = g.groupNodes({mlp1, mlp2}, mlp2.output)
+	local input = nng.DataNode()
+	local mlp1 = nng.MultiLayerPerceptron({3,7,5}, input)
+	local mlp2 = nng.MultiLayerPerceptron({5,6,2}, mlp1.output)
+	local both = nng.groupNodes({mlp1, mlp2}, mlp2.output)
 	print(both)
-	input.write(lab.ones(3))	
+	input.write(torch.ones(3))	
 	print("forward", both.output.read())
 	
-	local outerr = g.DataNode()
-	g.backwardTwin(both, outerr)
-	outerr.write(lab.ones(2))	
+	local outerr = nng.DataNode()
+	nng.backwardTwin(both, outerr)
+	outerr.write(torch.ones(2))	
 	print("backward", both.twin.output.read())		
 end
 
@@ -312,12 +312,12 @@ function tests.blockConnected()
 	local sizes = {{3,4}, {5,7}, {19}, {2,3,2}, {2}}
 	local inputs = {}
 	for i, s in ipairs(sizes[1]) do
-		inputs[i] = g.DataNode()
+		inputs[i] = nng.DataNode()
 	end	
-	local net = g.BlockConnectedPerceptron(sizes, inputs)	
+	local net = nng.BlockConnectedPerceptron(sizes, inputs)	
 	print(net)	
 	for i, input in ipairs(inputs) do
-		input.write(lab.ones(input.outputsize))
+		input.write(torch.ones(input.outputsize))
 	end	
 	print("forward", net.output.read())	
 end
@@ -327,18 +327,18 @@ function tests.backwardNonseq()
 	local sizes = {{5,3}, {2}, {4,3},{2, 3,2}, {1}}
 	local inputs = {}
 	for i, s in ipairs(sizes[1]) do
-		inputs[i] = g.DataNode()
+		inputs[i] = nng.DataNode()
 	end	
-	local net = g.BlockConnectedPerceptron(sizes, inputs)
+	local net = nng.BlockConnectedPerceptron(sizes, inputs)
 	for i, input in ipairs(inputs) do
-		input.write(lab.ones(input.outputsize))
+		input.write(torch.ones(input.outputsize))
 	end	
 	print("forward", net.output.read())
 	
 	-- backward
-	local outerr = g.DataNode()
-	g.backwardTwin(net, outerr)	
-	outerr.write(lab.ones(net.output.outputsize))		
+	local outerr = nng.DataNode()
+	nng.backwardTwin(net, outerr)	
+	outerr.write(torch.ones(net.output.outputsize))		
 	print("backward-last", net.nodes[#net.nodes].twin, net.nodes[#net.nodes].twin.output.read())
 	print("backward", net.nodes[1].twin, net.nodes[1].twin.output.read()[1])	
 end
@@ -346,14 +346,14 @@ end
 
 -- Backward building invoked by adding a criterion
 function tests.addCriterion()	
-	local input = g.DataNode()
+	local input = nng.DataNode()
 	local sizes = {2, 3, 2}
-	local mlp = g.MultiLayerPerceptron(sizes, input)
+	local mlp = nng.MultiLayerPerceptron(sizes, input)
 	-- let's say we have an autoencoder, so the output's target equals the input
 	local target = input
 	local loss, twins = nn.MSECriterion(){mlp.output,target}
 	print(twins)
-	input.write(lab.randn(2))
+	input.write(torch.randn(2))
 	print("output", input.read())
 	print("cost", loss.output.read())
 	-- as the backward pass was built automatically, we can do this	

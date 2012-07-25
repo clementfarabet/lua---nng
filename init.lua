@@ -13,8 +13,8 @@
 -----------------------------------------------------------------
 
 -- dependencies
-require('torch')
-require('nn')
+require 'torch'
+require 'nn'
 
 -----------------------------------------------------------------
 -- Classes: Node, DataNode, TimeDelayNode
@@ -97,7 +97,7 @@ end
 local function TimeDelayNode(size, initvalues)
 	local t = Node()
 	t.name = "TimeDelay"
-	if not initvalues then initvalues = lab.zeros(size) end
+	if not initvalues then initvalues = torch.zeros(size) end
 	t.output = DataNode(initvalues)
 	t.children = {t.output}
 	
@@ -507,7 +507,7 @@ local function flattenNodes(nodes)
 end
 
 -- register functions in package
-g = {
+nng = {
 	Node = Node, 
 	DataNode = DataNode, 
 	groupNodes = groupNodes,
@@ -524,7 +524,7 @@ g = {
 -----------------------------------------------------------------
 
 -- A recurrent counter	
-function g.CounterNode()
+function nng.CounterNode()
 	-- the flipflop is built first
 	local fflop = TimeDelayNode(1)
 	-- the linear transformation does: x <- 1*x+1 
@@ -538,7 +538,7 @@ function g.CounterNode()
 end
 
 -- A general-purpose MLP constructor 
-function g.MultiLayerPerceptron(sizes, input)
+function nng.MultiLayerPerceptron(sizes, input)
 	local layers = {}
 	local last = input
 	for i=2,#sizes do
@@ -555,7 +555,7 @@ end
 -- Construct a network composed of a number of sequential layers,
 -- each layer is composed of a number of parallel, independent (tanh) blocks.
 -- All blocks from one layer are (fully) connected to all blocks of the next.
-function g.BlockConnectedPerceptron(sizes, inputs)
+function nng.BlockConnectedPerceptron(sizes, inputs)
 	assert(#sizes > 1)
 	assert(#inputs == #sizes[1]) 
 	assert(#sizes[#sizes] == 1)
@@ -591,11 +591,11 @@ function g.BlockConnectedPerceptron(sizes, inputs)
 		end
 		last=next
 	end
-	return g.groupNodes(allnodes, last[1])
+	return nng.groupNodes(allnodes, last[1])
 end
 
 -- A standard ConvNet
-function g.ConvNet(nfeatures, fanins, filters, poolings, input)
+function nng.ConvNet(nfeatures, fanins, filters, poolings, input)
 	local layers = {}
 	local last = input
 	for i=2,#nfeatures do
@@ -617,7 +617,7 @@ end
 -- An Elman network has three fully connected layers (in, hidden, out),
 -- with the activations of the hidden layer feeding back into the 
 -- input, with a time-delay.
-function g.ElmanNode(sizes, input)
+function nng.ElmanNode(sizes, input)
 	assert (#sizes == 3)
 	local fflop = TimeDelayNode(sizes[2])
 	local mod0 = nn.JoinTable(1){input, fflop.output}
@@ -634,7 +634,7 @@ end
 -- (information conserved over a prolonged time in the activations).
 -- takes 4 input Var objects, returns the required modules and an output Var
 -- TODO: add peephole connections
-function g.LstmUnit(size, datain, ingatein, forgetgatein, outgatein)
+function nng.LstmUnit(size, datain, ingatein, forgetgatein, outgatein)
 	-- all the gate inputs get squashed between [0,1]
 	local ingate = nn.Sigmoid(){ingatein}
 	local forgetgate = nn.Sigmoid(){forgetgatein}
@@ -657,4 +657,4 @@ function g.LstmUnit(size, datain, ingatein, forgetgatein, outgatein)
 end
 
 -- return package
-return g
+return nng
