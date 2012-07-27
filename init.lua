@@ -1,5 +1,5 @@
 -----------------------------------------------------------------
--- General-purpose computation, seen as a graph.  
+-- General-purpose computation, seen as a graph.
 -- Encapsulating all kinds of neural networks, and more.
 --
 -- Clement Farabet & Tom Schaul
@@ -29,70 +29,70 @@ local function Node(inputs)
 	-- and are not added later to the parents table.
 	local n = {children={}, parents={}, valid=false}
 	if inputs then
-		for k, v in pairs(inputs) do 
+		for k, v in pairs(inputs) do
 			n.parents[k] = v
-			table.insert(v.children, n) 
+			table.insert(v.children, n)
 		end
 	end
-	
-	-- Core method: validates all inputs and then produces a valid output 
+
+	-- Core method: validates all inputs and then produces a valid output
 	function n.read(...)
-		-- recursive propagation to parents		
+		-- recursive propagation to parents
 		for _, p in pairs(n.parents) do
 			if not p.valid then p.read() end
 		end
 		n.valid = true
-		-- the return value is either coming from a function call, or 
+		-- the return value is either coming from a function call, or
 		-- can return a pointer to some data
-		if n.guts and type(n.guts)=='function' then 
+		if n.guts and type(n.guts)=='function' then
 			return n.guts(...)
 		else
 			return n.guts
-		end		
+		end
 	end
-	
+
 	-- Its partner method invalidates all dependants (maybe with a side-effect)
 	function n.write()
-		n.valid = false		
+		n.valid = false
 		for _,n in pairs(n.children) do
 			if n.valid then n.write() end
 		end
 	end
-		
-	-- A synchronized tick signal (default: no effect)	
+
+	-- A synchronized tick signal (default: no effect)
 	function n.tick() end
-	
+
     local mt = {}
     function mt.__tostring(self)
 		local s = n.name or ''
 		return s
 	end
-	setmetatable(n,mt)	
+	setmetatable(n,mt)
 	return n
 end
 
--- Data nodes depend only on their data, which is valid as long as it has not 
+-- Data nodes depend only on their data, which is valid as long as it has not
 -- been overwritten. Note that data can just as well be a closure that generates
 -- or reads something when invoked
--- TODO: should those nodes know about their size, even before they are valid? 
---       To help automatic constructions avoid runtime errors? 
+-- TODO: should those nodes know about their size, even before they are valid?
+--       To help automatic constructions avoid runtime errors?
 local function DataNode(data)
 	local n = Node()
 	n.name = "Data"
 	n.guts = data
-	n.valid = (data ~= nil) 
+	n.valid = (data ~= nil)
 	-- update the data, and propagate the invalid flag to all children
 	function n.write(newdata)
 		if newdata then n.guts = newdata end
-		n.valid = (newdata ~= nil) 
-		for _,c in pairs(n.children) do 
+		n.valid = (newdata ~= nil)
+		for _,c in pairs(n.children) do
 			if c.valid then c.write() end
-		end				
+		end
 	end
 	return n
 end
 
--- A time-delayed Node permits safely introducing cyles, so it does not need 
+-- A time-delayed Node permits safely introducing cyles, so it does not need
 -- to know its inputs upon construction
 local function TimeDelayNode(size, initvalues)
 	local t = Node()
@@ -100,17 +100,17 @@ local function TimeDelayNode(size, initvalues)
 	if not initvalues then initvalues = torch.zeros(size) end
 	t.output = DataNode(initvalues)
 	t.children = {t.output}
-	
+
 	-- The node must be connceted to a single datanode input
 	-- (tensor of the pre-specified size)
 	function t.connectInput(input)
 		t.input = input
 		t.valid = true
 	end
-	
+
 	-- At each time-stpe, copy the input data from the past.
 	function t.tick()
-		t.output.write(torch.Tensor(size):copy(t.input.read()))					
+		t.output.write(torch.Tensor(size):copy(t.input.read()))
 	end
 	return t
 end
@@ -119,14 +119,14 @@ end
 -- Extend nn modules to act as Nodes
 -----------------------------------------------------------------
 
--- Helper function to make single inputs and tables more 
+-- Helper function to make single inputs and tables more
 -- transparent (private func)
 local function nodetable2inputs(nodetable)
 	if #nodetable == 1 then
 		return nodetable[1].read()
 	else
 		local t = {}
-		for i,input in ipairs(nodetable) do 
+		for i,input in ipairs(nodetable) do
 			t[i] = input.read()
 		end
 		return t
@@ -140,7 +140,7 @@ function Module:__call__(inputs)
 	n.name = torch.typename(self)
 	n.module = self
 	n.inputs = inputs
-	-- Creating wrappers around anything that can change, 
+	-- Creating wrappers around anything that can change,
 	n.output = DataNode(self.output)
 	n.output.valid = false
 	local p,_ = self:parameters()
@@ -149,12 +149,12 @@ function Module:__call__(inputs)
 	table.insert(n.parents, n.parameters)
 	n.children = {n.output}
 	n.output.parents={n}
-	
+
 	function n.guts()
-		n.module:forward(nodetable2inputs(n.inputs))	
+		n.module:forward(nodetable2inputs(n.inputs))
 		n.output.write(n.module.output)
 	end
-		
+
 	return n
 end
 
@@ -170,19 +170,19 @@ local function groupNodes(nodes, output)
 	local gn = Node()
 	gn.nodes = nodes
 	gn.output = output
-	
+
 	-- TODO: something fancier..
 	local s = "Group["
-	for _, n in pairs(nodes) do 
-		if n.name then s = s.." "..n.name end 	
+	for _, n in pairs(nodes) do
+		if n.name then s = s.." "..n.name end
 	end
-	gn.name = s.." ]" 
-	
+	gn.name = s.." ]"
+
 	-- Ticks are propagated to all members
 	function gn.tick()
 		for _, n in pairs(gn.nodes) do
 			if n.tick then n.tick() end
-		end				
+		end
 	end
 	return gn
 end
@@ -192,18 +192,18 @@ end
 local function buildBackwardNode(node, gradOutputs)
 	assert (#gradOutputs > 0)
 	assert (node.module)
-	
+
 	local twin = Node(gradOutputs)
 	table.insert(twin.parents, node)
 	table.insert(node.children, twin)
 	twin.name = node.name.."twin"
-	
-	-- One or two datanodes depend on the twin 
+
+	-- One or two datanodes depend on the twin
 	twin.output = DataNode(node.module.gradInput)
 	twin.output.valid=false
 	table.insert(twin.output.parents, twin)
 	table.insert(twin.children, twin.output)
-	local _,gp = node.module:parameters()	
+	local _,gp = node.module:parameters()
 	if gp then
 		twin.gradParameters = DataNode(gp)
 		twin.gradParameters.valid=false
@@ -211,18 +211,18 @@ local function buildBackwardNode(node, gradOutputs)
 		table.insert(twin.children, twin.gradParameters)
 	end
 	twin.gradOutputs = gradOutputs
-	
+
 	function twin.guts()
 		-- The convention is that all gradoutputs can be summed
 		local gradOutput = twin.gradOutputs[1].read()
 		for i=2,#twin.gradOutputs do
-			gradOutput = gradOutput + twin.gradOutputs[i].read()			
-		end		
+			gradOutput = gradOutput + twin.gradOutputs[i].read()
+		end
 		twin.output.write(node.module:backward(nodetable2inputs(node.inputs), gradOutput))
 	end
-	
-	-- if the node has multiple inputs, we will need to provide the proper input-error 
-	local function TableNode(tab, index) 
+
+	-- if the node has multiple inputs, we will need to provide the proper input-error
+	local function TableNode(tab, index)
 		local tabn = DataNode(tab)
 		tabn.name = "Table["..index.."]"
 		function tabn.guts()
@@ -235,19 +235,19 @@ local function buildBackwardNode(node, gradOutputs)
 			return twin.output
 		else
 			for index, inp in ipairs(node.inputs) do
-				if inp.guts==input.guts then 
+				if inp.guts==input.guts then
 					return TableNode(twin.output, index)
 				end
 			end
 		end
 	end
-	
-	node.twin = twin	
+
+	node.twin = twin
 	return twin
 end
 
 
--- Recursively builds the twin/backward nodes for a network (the starting point 
+-- Recursively builds the twin/backward nodes for a network (the starting point
 --     is a node whose output corresponds to the provided external error)
 --     Returns a list of all twins created,
 --     or 'nil' if a dependency was missing.
@@ -256,7 +256,7 @@ local function backwardTwin(node, extGradOutput, reccall)
 
 	-- if the node already has a twin, we're done
 	if node.twin then return {} end
-		
+
 	-- nesting case (retains the nesting structure for the backward pass?)
 	local function twinGroups(gn, twinnodes)
 		for _,cn in ipairs(gn.nodes) do
@@ -264,18 +264,18 @@ local function backwardTwin(node, extGradOutput, reccall)
 				twinGroups(cn, twinnodes)
 			end
 		end
-		local mine = {}		
+		local mine = {}
 		for i,nt in ipairs(twinnodes) do
 			for _,mn in ipairs(gn.nodes) do
-				if nt==mn.twin then					
+				if nt==mn.twin then
 					table.insert(mine, nt)
 					table.remove(twinnodes, i)
 					break
 				end
 			end
-		end	
-		-- TODO: this assumes a groupNode as a sinlge node where all the 
-		--       inputs enter... not general enough							
+		end
+		-- TODO: this assumes a groupNode as a sinlge node where all the
+		--       inputs enter... not general enough
 		gn.twin = groupNodes(mine, gn.nodes[1].twin.output)
 		function gn.twin.getOutputFor(input)
 			return gn.nodes[1].getOutputFor(input)
@@ -283,19 +283,19 @@ local function backwardTwin(node, extGradOutput, reccall)
 		table.insert(twinnodes, gn.twin)
 	end
 	if node.nodes then
-		result = backwardTwin(node.output, extGradOutput, reccall)	
+		result = backwardTwin(node.output, extGradOutput, reccall)
 		if result then twinGroups(node, result) end
 		return result
-	end 
-	
+	end
+
 	-- standard case (node with a module)
 	if node.module then
-		-- the outputs used come from the children's twins (plus the external one) 
+		-- the outputs used come from the children's twins (plus the external one)
 		local gradOutputs = {}
-		if extGradOutput then 
-			gradOutputs = {extGradOutput} 
+		if extGradOutput then
+			gradOutputs = {extGradOutput}
 		end
-	
+
 		-- we make sure all the node's children are usable
 		-- and if they are, we will use their twins
 		local function getTwins(cn)
@@ -312,30 +312,30 @@ local function backwardTwin(node, extGradOutput, reccall)
 			if not tmp then return nil end
 		 	getTwins(cn)
 		end
-					
+
 		-- build a twin for this node
 		buildBackwardNode(node, gradOutputs)
 		table.insert(result, node.twin)
 	end
-	
-	
-	-- Now that this node has a twin, its parents can get them too (recursively)	
+
+
+	-- Now that this node has a twin, its parents can get them too (recursively)
 	if reccall then
-		return result 
+		return result
 	end
-	for _,p in ipairs(node.parents) do			
+	for _,p in ipairs(node.parents) do
 		local tmp = nil
 		if node.twin then
 			tmp = backwardTwin(p)
 		else
 			-- the external info was not used, so it's passed up one level
-			tmp = backwardTwin(p, extGradOutput)		
+			tmp = backwardTwin(p, extGradOutput)
 		end
 		if tmp then
 			for _,x in ipairs(tmp) do
 				table.insert(result, x)
 			end
-		end		
+		end
 	end
 	return result
 
@@ -349,21 +349,21 @@ function Criterion:__call__(inputs)
 	cnode.name = torch.typename(self)
 	cnode.module = self
 	cnode.inputs = inputs
-	-- Creating wrappers around anything that can change, 
+	-- Creating wrappers around anything that can change,
 	cnode.output = DataNode(self.output)
 	cnode.output.valid = false
 	-- and establish the dependencies
 	cnode.children = {cnode.output}
 	cnode.output.parents={cnode}
-	
+
 	function cnode.guts()
 		local ins = nodetable2inputs(cnode.inputs)
 		-- a criterion always has two inputs
 		cnode.module:forward(ins[1], ins[2])
 		cnode.output.write(cnode.module.output)
 	end
-	
-	-- we can build the corresponding backward node immediately too 
+
+	-- we can build the corresponding backward node immediately too
 	local twin = Node(inputs)
 	table.insert(twin.parents, cnode)
 	table.insert(cnode.children, twin)
@@ -372,15 +372,15 @@ function Criterion:__call__(inputs)
 	twin.output = DataNode(self.gradInput)
 	twin.output.valid=false
 	table.insert(twin.output.parents, twin)
-	table.insert(twin.children, twin.output)	
+	table.insert(twin.children, twin.output)
 	function twin.guts()
 		local ins = nodetable2inputs(cnode.inputs)
 		twin.output.write(twin.module:backward(ins[1], ins[2]))
 	end
 	function twin.getOutputFor(input) return twin.output end
-	cnode.twin = twin  
-	
-	-- now also establish backward connections from the first of its inputs	
+	cnode.twin = twin
+
+	-- now also establish backward connections from the first of its inputs
 	local twins = backwardTwin(inputs[1], twin.output)
 	return cnode, twins
 end
@@ -508,8 +508,8 @@ end
 
 -- register functions in package
 nng = {
-	Node = Node, 
-	DataNode = DataNode, 
+	Node = Node,
+	DataNode = DataNode,
 	groupNodes = groupNodes,
 	cloneNode = cloneNode,
 	backwardTwin = backwardTwin,
@@ -523,21 +523,21 @@ nng = {
 -- A few examples of composite nodes that can be built
 -----------------------------------------------------------------
 
--- A recurrent counter	
+-- A recurrent counter
 function nng.CounterNode()
 	-- the flipflop is built first
 	local fflop = TimeDelayNode(1)
-	-- the linear transformation does: x <- 1*x+1 
-	local mod = nn.Linear(1,1){fflop.output}	
+	-- the linear transformation does: x <- 1*x+1
+	local mod = nn.Linear(1,1){fflop.output}
 	-- TODO: this is not best way:
-	mod.module.weight:fill(1) 
-	mod.module.bias:fill(1)	
+	mod.module.weight:fill(1)
+	mod.module.bias:fill(1)
 	-- the flipflop is connected at the end
-	fflop.connectInput(mod.output)	
+	fflop.connectInput(mod.output)
 	return groupNodes({fflop, mod}, mod.output)
 end
 
--- A general-purpose MLP constructor 
+-- A general-purpose MLP constructor
 function nng.MultiLayerPerceptron(sizes, input)
 	local layers = {}
 	local last = input
@@ -557,20 +557,20 @@ end
 -- All blocks from one layer are (fully) connected to all blocks of the next.
 function nng.BlockConnectedPerceptron(sizes, inputs)
 	assert(#sizes > 1)
-	assert(#inputs == #sizes[1]) 
+	assert(#inputs == #sizes[1])
 	assert(#sizes[#sizes] == 1)
-	
+
 	-- track sizes of different blocks
 	for i, s in ipairs(sizes[1]) do
-		inputs[i].outputsize = s	
-	end	
-	local last = inputs	
+		inputs[i].outputsize = s
+	end
+	local last = inputs
 	local allnodes = {}
 	for i=2,#sizes do
 		local next = {}
 		for s=1,#sizes[i] do
 			local incoming = {}
-			local ss = sizes[i][s]				
+			local ss = sizes[i][s]
 			for l=1,#last do
 				local affine = nn.Linear(last[l].outputsize, ss){last[l]}
 				affine.output.outputsize = ss
@@ -583,11 +583,11 @@ function nng.BlockConnectedPerceptron(sizes, inputs)
 				table.insert(allnodes, gather)
 				squash = nn.Tanh(){gather.output}
 			else
-				squash = nn.Tanh()(incoming)			
-			end			
+				squash = nn.Tanh()(incoming)
+			end
 			table.insert(allnodes, squash)
-			squash.output.outputsize = ss		
-			table.insert(next, squash.output)			
+			squash.output.outputsize = ss
+			table.insert(next, squash.output)
 		end
 		last=next
 	end
@@ -615,7 +615,7 @@ function nng.ConvNet(nfeatures, fanins, filters, poolings, input)
 end
 
 -- An Elman network has three fully connected layers (in, hidden, out),
--- with the activations of the hidden layer feeding back into the 
+-- with the activations of the hidden layer feeding back into the
 -- input, with a time-delay.
 function nng.ElmanNode(sizes, input)
 	assert (#sizes == 3)
@@ -626,7 +626,7 @@ function nng.ElmanNode(sizes, input)
 	local mod3 = nn.Linear(sizes[2],sizes[3]){mod2.output}
 	-- connecting recurrent link
 	fflop.connectInput(mod2.output)
-	return groupNodes({fflop, mod0, mod1, mod2, mod3}, mod3.output)	
+	return groupNodes({fflop, mod0, mod1, mod2, mod3}, mod3.output)
 end
 
 -- Long short-term memory cells (LSTM) are a specialized building block
@@ -651,8 +651,8 @@ function nng.LstmUnit(size, datain, ingatein, forgetgatein, outgatein)
 	-- one last squashing, of the output
 	local preout = nn.CMulTable(){outgate.output, state.output}
 	local out = nn.Tanh(){preout.output}
-	
-	return groupNodes({ingate, forgetgate, outgate, newdata, statein, 
+
+	return groupNodes({ingate, forgetgate, outgate, newdata, statein,
 					   fflop, state, nextstate, preout, out}, out.output)
 end
 
